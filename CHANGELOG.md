@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-31
+
+### Added
+- **Connection profile selection**: a "Connection Profile" dropdown in settings lets you choose which SillyTavern connection to use for rewriting and review, independent of your active chat connection. Default "Active connection" preserves the previous behavior.
+- `callLLM` request router in `src/llm.js`: routes through `ConnectionManagerRequestService.sendRequest()` when a profile is chosen, otherwise `generateRaw()`.
+- `normalizeLLMContent` helper to unify response shapes across the two paths (string vs ExtractedData with parsed-object content). Threaded `profileId` through `generateRewrite` and `reviewEntries`.
+- 9 tests for `normalizeLLMContent` in `tests/llm.test.js`.
+
+### Changed
+- Bumped version to 0.3.0.
+
 ## [0.2.0] - 2026-05-31
 
 ### Added

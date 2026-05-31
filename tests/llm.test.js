@@ -1,4 +1,4 @@
-import { parseLLMResponse } from '../src/llm.js';
+import { parseLLMResponse, normalizeLLMContent } from '../src/llm.js';
 
 let passed = 0;
 let failed = 0;
@@ -91,6 +91,38 @@ try {
     failed++;
     console.error(`  ❌ FAIL: Whitespace trimming threw: ${e.message}`);
 }
+
+console.log('\n=== normalizeLLMContent Tests ===\n');
+
+// generateRaw with jsonSchema returns a JSON string → passed through as-is
+const jsonStr = '{"rewrittenContent": "Hi.", "justification": "x"}';
+assert(normalizeLLMContent(jsonStr) === jsonStr, 'String input is returned unchanged');
+
+// generateRaw without schema returns a plain message string
+assert(normalizeLLMContent('plain text') === 'plain text', 'Plain string returned unchanged');
+
+// ConnectionManagerRequestService ExtractedData with string content
+const extractedString = { content: '{"issues": []}', reasoning: '' };
+assert(normalizeLLMContent(extractedString) === '{"issues": []}', 'Extracts string content from ExtractedData');
+
+// ExtractedData where content is an already-parsed object (json_schema path)
+const extractedObject = { content: { rewrittenContent: 'Done.', justification: 'y' }, reasoning: '' };
+const normalized = normalizeLLMContent(extractedObject);
+assert(typeof normalized === 'string', 'Parsed-object content is re-stringified to a string');
+const reparsed = JSON.parse(normalized);
+assert(reparsed.rewrittenContent === 'Done.', 'Re-stringified content round-trips through JSON.parse');
+
+// A bare object with no content field gets stringified whole
+const bareObject = { issues: [] };
+assert(JSON.parse(normalizeLLMContent(bareObject)).issues.length === 0, 'Bare object without content field is stringified whole');
+
+// Null / undefined throw a clear error
+assertThrows(() => normalizeLLMContent(null), 'Throws on null');
+assertThrows(() => normalizeLLMContent(undefined), 'Throws on undefined');
+
+// End-to-end: ExtractedData object content flows through parseLLMResponse
+const e2e = parseLLMResponse(normalizeLLMContent({ content: { rewrittenContent: 'E2E.', justification: 'z' } }));
+assert(e2e.rewrittenContent === 'E2E.', 'ExtractedData object content parses through parseLLMResponse');
 
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
 process.exit(failed > 0 ? 1 : 0);

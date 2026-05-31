@@ -60,13 +60,15 @@ STLorebookManipulator/
 - All functions are async and handle errors with visible toast notifications.
 
 ### src/llm.js — LLM Interaction
-- **generateRewrite(entryContent, promptText, maxTokens, context)**: Calls `generateRaw()` with structured output for a single-entry rewrite. Returns `{ rewrittenContent, justification }`.
-- **reviewEntries(entries, instructions, maxTokens, context, options)**: Whole-book review. Auto-batches entries via `batchEntries`, sends each batch to `generateRaw()` with the review JSON schema, and combines the results into one issue list. Reports progress via `options.onProgress(current, total)`. Returns `{ issues, batchCount }`.
+- **generateRewrite(entryContent, promptText, maxTokens, context, profileId=null)**: Single-entry rewrite with structured output. Returns `{ rewrittenContent, justification }`.
+- **reviewEntries(entries, instructions, maxTokens, context, options)**: Whole-book review. Auto-batches entries via `batchEntries`, sends each batch with the review JSON schema, and combines results into one issue list. Reports progress via `options.onProgress(current, total)`. `options.profileId` selects a connection profile. Returns `{ issues, batchCount }`.
+- **callLLM({ systemPrompt, prompt, responseLength, jsonSchema, profileId }, context)** (internal): The request router. When `profileId` is set, sends through `ConnectionManagerRequestService.sendRequest()` (json_schema passed as an override payload); otherwise uses `generateRaw()` on the active connection. Returns a normalized string.
+- **normalizeLLMContent(result)**: Collapses every response shape into a single JSON string. `generateRaw` returns a string; `ConnectionManagerRequestService` returns `ExtractedData` whose `.content` is a string normally but an already-*parsed object* when json_schema is used. This helper re-stringifies parsed objects so the parsers below work identically across backends. Unit-tested.
 - **batchEntries(entries, maxBatchChars=12000)**: Pure function that splits entries into batches so each batch's combined text stays under a character budget. An oversized single entry gets its own batch (never dropped). Unit-tested directly.
 - **parseLLMResponse(rawText)**: Validates and returns the rewrite result.
 - **parseReviewResponse(rawText)**: Validates and sanitizes the review result — drops malformed/description-less issues, coerces invalid type/severity to safe defaults, coerces string uids to numbers.
 - **extractJson(rawText)** (internal): Shared JSON extraction (handles code fences, surrounding prose). Used by both parsers so the logic lives in one place.
-- ST's `generateRaw` uses `responseLength` (not `max_tokens`) and, when `jsonSchema` is set, returns the extracted JSON string directly. Uses the active ST connection automatically.
+- ST's `generateRaw` uses `responseLength` (not `max_tokens`) and, when `jsonSchema` is set, returns the extracted JSON string directly.
 
 ### src/diff.js — Diff Computation & Rendering
 - **computeDiff(oldText, newText)**: Word-level LCS-based diff. Returns array of `{ type: 'equal'|'insert'|'delete', value: string }`.
@@ -148,7 +150,8 @@ Settings stored in `SillyTavern.getContext().extensionSettings['lorebook_manipul
     backupRetention: 5,            // number of backups to keep per lorebook
     promptPreset: 'prune',         // 'prune' | 'clarify' | 'grammar' | 'custom'
     customPrompt: '',              // user-defined prompt text
-    maxTokens: 1024                // max LLM response tokens
+    maxTokens: 1024,               // max LLM response tokens
+    connectionProfileId: ''        // '' = active connection; else a Connection Manager profile id
 }
 ```
 
@@ -166,6 +169,7 @@ Loaded on init, saved via `saveSettingsDebounced()` on every change.
 | Per-entry approval workflow | Bulk apply is risky. Individual review ensures user stays in control. Bulk mode deferred. |
 | Whole-book review returns an issue list, not direct rewrites | Keeps the user in control: the review surfaces problems, then each fix goes through the existing per-entry diff/approve flow. No mass changes. |
 | Auto-batch by character budget | Large lorebooks exceed the model's context window. Batching by a char budget (default 12000) keeps each request safe. Tradeoff: issues spanning two batches can't be detected (see Known Unstable Areas). |
+| Connection profile routing via `callLLM` | Lets the user run lorebook work on a different model than their chat (e.g. cheaper/faster). Default ('') keeps the original `generateRaw` behavior so nothing breaks when Connection Manager is absent. `normalizeLLMContent` hides the response-shape difference between the two paths so parsers/tests stay unchanged. |
 
 ## Known Unstable Areas
 

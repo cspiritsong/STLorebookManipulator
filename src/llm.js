@@ -75,14 +75,73 @@ const REVIEW_SCHEMA = {
     },
 };
 
-// ── Single-entry rewrite ─────────────────────────────────────────────────
+// ── LLM request router ───────────────────────────────────────────────────
 
-export async function generateRewrite(entryContent, promptText, maxTokens, context) {
-    if (!entryContent || typeof entryContent !== 'string') {
-        throw new Error('Entry content is required and must be a non-empty string.');
+// Normalize the many response shapes into a single JSON string so the parsers
+// below can treat every backend uniformly.
+//
+// - generateRaw() with a jsonSchema returns a JSON *string*.
+// - generateRaw() without a schema returns the message *string*.
+// - ConnectionManagerRequestService.sendRequest() returns ExtractedData
+//   ({ content, reasoning }); with json_schema set, `content` is an already
+//   *parsed object*, otherwise it is a string.
+export function normalizeLLMContent(result) {
+    if (typeof result === 'string') {
+        return result;
     }
+    if (result && typeof result === 'object') {
+        const content = Object.prototype.hasOwnProperty.call(result, 'content') ? result.content : result;
+        if (typeof content === 'string') {
+            return content;
+        }
+        // A parsed object (json_schema path) → re-stringify so the downstream
+        // extractJson/JSON.parse logic works the same as the string paths.
+        return JSON.stringify(content);
+    }
+    throw new Error('Empty or invalid response from LLM.');
+}
+
+// Send one structured request, routing through a chosen connection profile
+// when `profileId` is set, otherwise through the active connection.
+async function callLLM({ systemPrompt, prompt, responseLength, jsonSchema, profileId }, context) {
+    // Route through a specific connection profile.
+    if (profileId) {
+        const service = context.ConnectionManagerRequestService;
+        if (!service || typeof service.sendRequest !== 'function') {
+            throw new Error('Connection Manager is not available. Pick "Active connection" or enable the Connection Manager extension.');
+        }
+
+        const messages = [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: prompt },
+        ];
+
+        // json_schema (snake_case) is passed as an override payload field.
+        const overridePayload = jsonSchema ? { json_schema: jsonSchema } : {};
+        const result = await service.sendRequest(
+            profileId,
+            messages,
+            responseLength,
+            { extractData: true },
+            overridePayload,
+        );
+        return normalizeLLMContent(result);
+    }
+
+    // Default: use whatever API is active in SillyTavern.
     if (!context || typeof context.generateRaw !== 'function') {
         throw new Error('generateRaw is not available on the current SillyTavern context.');
+    }
+    // ST's generateRaw uses `responseLength` (not `max_tokens`).
+    const result = await context.generateRaw({ systemPrompt, prompt, responseLength, jsonSchema });
+    return normalizeLLMContent(result);
+}
+
+// ── Single-entry rewrite ─────────────────────────────────────────────────
+
+export async function generateRewrite(entryContent, promptText, maxTokens, context, profileId = null) {
+    if (!entryContent || typeof entryContent !== 'string') {
+        throw new Error('Entry content is required and must be a non-empty string.');
     }
 
     const systemPrompt = `You are a lorebook editor. Your task is to rewrite lorebook entries according to the user's instructions.
@@ -103,14 +162,13 @@ ${entryContent}
 Rewrite this entry according to the instructions above. Return your response as JSON with "rewrittenContent" and "justification" fields.`;
 
     try {
-        // ST's generateRaw uses `responseLength` (not `max_tokens`).
-        // When `jsonSchema` is set, it returns the extracted JSON string directly.
-        const result = await context.generateRaw({
+        const result = await callLLM({
             systemPrompt,
             prompt: userPrompt,
             responseLength: maxTokens || 1024,
             jsonSchema: REWRITE_SCHEMA,
-        });
+            profileId,
+        }, context);
 
         return parseLLMResponse(result);
     } catch (e) {
@@ -159,16 +217,15 @@ export function batchEntries(entries, maxBatchChars = 12000) {
 
 // Review all entries and return a combined list of issues. Auto-batches large
 // books and reports progress via options.onProgress(currentBatch, totalBatches).
+// options.profileId routes through a chosen connection profile (else active).
 export async function reviewEntries(entries, instructions, maxTokens, context, options = {}) {
     if (!Array.isArray(entries) || entries.length === 0) {
         throw new Error('There are no entries to review.');
     }
-    if (!context || typeof context.generateRaw !== 'function') {
-        throw new Error('generateRaw is not available on the current SillyTavern context.');
-    }
 
     const maxBatchChars = options.maxBatchChars || 12000;
     const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+    const profileId = options.profileId || null;
 
     const batches = batchEntries(entries, maxBatchChars);
     const allIssues = [];
@@ -206,12 +263,13 @@ ${entriesText}
 Report issues as JSON with an "issues" array. Reference each affected entry by its exact uid and name.`;
 
         try {
-            const result = await context.generateRaw({
+            const result = await callLLM({
                 systemPrompt,
                 prompt: userPrompt,
                 responseLength: maxTokens || 2048,
                 jsonSchema: REVIEW_SCHEMA,
-            });
+                profileId,
+            }, context);
 
             const parsed = parseReviewResponse(result);
             allIssues.push(...parsed.issues);

@@ -2,6 +2,12 @@
 
 ## Current Issues
 
+### Connection Profile Dropdown Is Populated Once at Load
+- **What**: The Connection Profile dropdown is filled when the extension initializes. Profiles created/renamed/deleted in the Connection Manager *after* that are not reflected until SillyTavern is reloaded.
+- **Impact**: Minor. A newly created profile won't appear in the dropdown until reload. If a selected profile is deleted, the next request through it errors with a clear message and the setting falls back to "Active connection" on the following load.
+- **Workaround**: Reload the page after changing your connection profiles.
+- **Fix planned**: A future release could subscribe to `CONNECTION_PROFILE_CREATED/UPDATED/DELETED` events (or use `ConnectionManagerRequestService.handleDropdown`) to keep the list live.
+
 ### Whole-Book Review Cannot Detect Cross-Batch Issues
 - **What**: Large lorebooks are split into batches so each request fits the model's context window. The model only sees one batch at a time, so an issue spanning two batches (e.g. duplicate entries that land in different batches) will not be detected.
 - **Impact**: On very large books, some duplicates/overlaps may be missed. Most personal lorebooks fit in a single batch and are unaffected.

@@ -118,6 +118,7 @@ export async function openMainPopup(settings, context) {
                 settings.maxTokens,
                 context,
                 {
+                    profileId: settings.connectionProfileId || null,
                     onProgress: (current, total) => {
                         showStatus(reviewStatus, `Reviewing... batch ${current} of ${total}`, 'loading');
                     },
@@ -266,6 +267,7 @@ export async function openRewritePopup(entry, bookName, settings, context, issue
                 promptText,
                 settings.maxTokens,
                 context,
+                settings.connectionProfileId || null,
             );
 
             currentSuggestion = result.rewrittenContent;

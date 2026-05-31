@@ -11,6 +11,7 @@ const DEFAULT_SETTINGS = Object.freeze({
     promptPreset: 'prune',
     customPrompt: '',
     maxTokens: 1024,
+    connectionProfileId: '',
 });
 
 let currentBookName = null;
@@ -27,6 +28,7 @@ jQuery(async () => {
 
     initSettings(context);
     await populateLorebookSelector(context);
+    populateConnectionProfiles(context);
 
     $('#lm_lorebook_select').on('change', async function () {
         currentBookName = $(this).val();
@@ -37,6 +39,11 @@ jQuery(async () => {
             $('#lm_entry_list_container').hide();
             currentEntries = [];
         }
+    });
+
+    $('#lm_connection_profile').on('change', function () {
+        getSettings(context).connectionProfileId = $(this).val();
+        context.saveSettingsDebounced();
     });
 
     $('#lm_diff_style').on('change', function () {
@@ -93,6 +100,47 @@ function initSettings(context) {
     $('#lm_max_tokens').val(settings.maxTokens);
 
     toggleCustomPrompt(settings.promptPreset);
+}
+
+// Populate the connection profile dropdown from SillyTavern's Connection
+// Manager. The first option ("Active connection") is always present and means
+// "use whatever API the chat is currently using" (settings.connectionProfileId
+// === ''). If the Connection Manager extension is unavailable, the dropdown is
+// left with just that default so the extension still works.
+function populateConnectionProfiles(context) {
+    const select = $('#lm_connection_profile');
+    const settings = getSettings(context);
+
+    const service = context.ConnectionManagerRequestService;
+    if (!service || typeof service.getSupportedProfiles !== 'function') {
+        // Connection Manager not available — keep just the "Active connection" default.
+        select.val('');
+        return;
+    }
+
+    let profiles = [];
+    try {
+        profiles = service.getSupportedProfiles() || [];
+    } catch (e) {
+        console.warn('[LorebookManipulator] Could not list connection profiles:', e);
+        select.val('');
+        return;
+    }
+
+    // Rebuild options: keep the default, then one per supported profile.
+    select.find('option:not(:first)').remove();
+    for (const profile of profiles) {
+        select.append(`<option value="${escapeAttr(profile.id)}">${escapeHtml(profile.name || profile.id)}</option>`);
+    }
+
+    // Restore the saved selection if it still exists; otherwise fall back to default.
+    const saved = settings.connectionProfileId || '';
+    const stillExists = saved === '' || profiles.some((p) => p.id === saved);
+    if (!stillExists) {
+        settings.connectionProfileId = '';
+        context.saveSettingsDebounced();
+    }
+    select.val(settings.connectionProfileId || '');
 }
 
 function toggleCustomPrompt(preset) {

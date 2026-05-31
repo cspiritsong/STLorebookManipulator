@@ -10,6 +10,7 @@ A SillyTavern extension for safely rewriting and pruning lorebook entries using 
 - Browse entries in any of your SillyTavern lorebooks
 - **Review the whole book**: ask the LLM to scan all entries and recommend fixes (duplicates, overlap, verbosity, contradictions). Large books are auto-batched to fit the model's context window.
 - Send individual entries to the LLM with a rewrite/prune prompt
+- **Choose any connection profile** for the work, independent of your active chat connection
 - Review suggested changes in a highlighted before/after diff (inline or side-by-side)
 - Approve or reject each suggestion individually
 - Auto-backup history before every change, with restore from any point
@@ -65,6 +66,7 @@ Use **Backup History** in the extension settings drawer to restore any previous 
 
 Open the **Extensions** tab → **Lorebook Manipulator** settings drawer to configure:
 
+- **Connection Profile**: Which SillyTavern connection to use for rewriting and review. Leave on "Active connection" to use whatever your chat is currently using, or pick a specific profile (e.g. a cheaper/faster model just for lorebook work). Requires the built-in Connection Manager.
 - **Diff Style**: Inline (single column) or Side-by-Side (two columns)
 - **Backup Retention**: Number of backups to keep (default: 5)
 - **Rewrite Prompt**: Choose a preset (Prune / Clarify / Fix Grammar) or enter custom instructions

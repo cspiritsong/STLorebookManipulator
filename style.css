@@ -11,6 +11,15 @@
     opacity: 1;
 }
 
+/* Inline field hint text below a setting */
+.lm-field-hint {
+    display: block;
+    font-size: 0.8em;
+    color: var(--SmartThemeSubtleColor, #999);
+    margin: 2px 0 8px;
+    line-height: 1.4;
+}
+
 /* Entry List */
 .lm-entry-list {
     max-height: 300px;
