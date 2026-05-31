@@ -10,6 +10,8 @@ A SillyTavern extension for safely rewriting and pruning lorebook entries using 
 - Browse entries in any of your SillyTavern lorebooks
 - **Review the whole book**: ask the LLM to scan all entries and recommend fixes (duplicates, overlap, verbosity, contradictions). Large books are auto-batched to fit the model's context window.
 - Send individual entries to the LLM with a rewrite/prune prompt
+- **Edit an entry's title, primary keys, and secondary keys** directly — not just content
+- **Delete entries** (with automatic backup first) to clear out duplicates and dead weight
 - **Choose any connection profile** for the work, independent of your active chat connection
 - Review suggested changes in a highlighted before/after diff (inline or side-by-side)
 - Approve or reject each suggestion individually
@@ -48,17 +50,21 @@ Click the book icon (open-book) added to the character sheet, group panel, and r
 1. Select a lorebook from the dropdown
 2. The entry list appears, along with a **Review the whole book** panel
 
-**To rewrite a single entry:**
-1. Click an entry to open the rewrite popup
-2. Click **Generate Suggestion** (uses your configured rewrite preset or custom prompt)
-3. Review the highlighted diff
-4. Click **Approve** to apply (auto-backs up first) or **Reject** to discard
+**To edit a single entry:**
+1. Click an entry to open the editor popup
+2. Edit the **Title**, **Primary Keys**, or **Secondary Keys** fields directly (keys are comma-separated)
+3. Optionally click **Generate Suggestion** to rewrite the content (uses your configured rewrite preset or custom prompt), then review the highlighted diff
+4. Click **Save** to apply (auto-backs up first) or **Cancel** to discard
+
+**To delete an entry:**
+1. Click the trash icon on the right of any entry in the list
+2. Confirm. A backup is saved first, so you can restore it from Backup History if needed
 
 **To review the whole book:**
 1. (Optional) Type what to focus on in the review box (e.g. "find duplicate lore"). Leave blank for a general review.
 2. Click **Review & Recommend Fixes**. Large books are automatically split into batches.
 3. A list of issues appears, color-coded by severity (duplicate, overlap, verbose, contradiction, other)
-4. Click an affected entry on any issue to open the rewrite popup, pre-filled with that issue, and fix it through the normal diff/approve flow
+4. Click an affected entry on any issue to open the editor, pre-filled with that issue, and fix it through the normal diff/save flow
 
 Use **Backup History** in the extension settings drawer to restore any previous state.
 
@@ -74,8 +80,9 @@ Open the **Extensions** tab → **Lorebook Manipulator** settings drawer to conf
 
 ## Safety
 
-- Auto-backup is created before *every* modification
-- Only the `content` field is ever changed — keys, triggers, position, priority, and all other metadata are preserved
+- Auto-backup is created before *every* modification, including deletes
+- Only `content`, `title (comment)`, `primary keys`, and `secondary keys` can be changed — position, order, probability, insertion logic, and all other structural metadata are preserved
+- Deleting an entry asks for confirmation and backs up the book first, so any delete is recoverable from Backup History
 - Original data is always recoverable via backup restore
 - No changes are applied without explicit user approval
 

@@ -2,6 +2,12 @@
 
 ## Current Issues
 
+### Field Edits (Title / Keys) Have No Diff Preview
+- **What**: The before/after diff preview only covers the **content** field (when you click Generate Suggestion). Edits to title, primary keys, or secondary keys are applied directly on Save with no diff.
+- **Impact**: Minor. Field edits are small and visible in the input boxes. A pre-delete/pre-save backup still protects against mistakes.
+- **Workaround**: Restore from Backup History if a field edit was wrong.
+- **Fix planned**: Could add a simple field-level before/after summary on Save if requested.
+
 ### Connection Profile Dropdown Is Populated Once at Load
 - **What**: The Connection Profile dropdown is filled when the extension initializes. Profiles created/renamed/deleted in the Connection Manager *after* that are not reflected until SillyTavern is reloaded.
 - **Impact**: Minor. A newly created profile won't appear in the dropdown until reload. If a selected profile is deleted, the next request through it errors with a clear message and the setting falls back to "Active connection" on the following load.

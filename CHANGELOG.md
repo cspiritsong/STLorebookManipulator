@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-31
+
+### Added
+- **Edit entry fields**: the entry editor popup now lets you change the **title (comment)**, **primary keys**, and **secondary keys** directly — not just content. Keys are entered as comma-separated lists.
+- **Delete entries**: each entry in the list has a trash button. Deleting asks for confirmation and saves a backup first, so it's recoverable from Backup History.
+- `updateEntryFields`, `deleteEntry`, `sanitizeEntryFields`, and `parseKeywordString` in `src/lorebook.js`. `EDITABLE_FIELDS` is the single source of truth for what may be written.
+- `tests/lorebook.test.js`: 29 tests for field editing, deletion, sanitization, and keyword parsing (mocked context).
+
+### Changed
+- The single-entry popup is now a general **editor** (Save/Cancel) rather than rewrite-only. Generating a content suggestion is optional; you can save field edits without regenerating.
+- `updateEntryContent` is now a thin backward-compatible wrapper over `updateEntryFields`.
+- Only `content`, `comment`, `key`, and `keysecondary` are ever written; all other structural fields are preserved.
+- Bumped version to 0.4.0.
+
 ## [0.3.0] - 2026-05-31
 
 ### Added

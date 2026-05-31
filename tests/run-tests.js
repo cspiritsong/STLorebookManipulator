@@ -11,6 +11,7 @@ const tests = [
     'review.test.js',
     'diff.test.js',
     'backup.test.js',
+    'lorebook.test.js',
 ];
 
 let totalPassed = true;

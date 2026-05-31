@@ -28,12 +28,14 @@
 }
 
 .lm-entry-item {
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
     padding: 8px 10px;
     margin-bottom: 4px;
     background: var(--SmartThemeBlurTintColor, #2a2a2a);
     border: 1px solid var(--SmartThemeBorderColor, #444);
     border-radius: 4px;
-    cursor: pointer;
     transition: background 0.15s ease;
 }
 
@@ -43,6 +45,25 @@
 
 .lm-entry-item.disabled {
     opacity: 0.5;
+}
+
+/* Clickable body opens the editor; takes the available width. */
+.lm-entry-body {
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+}
+
+/* Per-entry delete button (trash icon). */
+.lm-entry-delete {
+    flex: 0 0 auto;
+    align-self: center;
+    padding: 4px 8px;
+    color: #ff6b6b;
+}
+
+.lm-entry-delete:hover {
+    background: rgba(255, 80, 80, 0.15);
 }
 
 .lm-entry-name {
@@ -174,6 +195,18 @@
 /* Popup Actions */
 .lm-popup-title {
     margin: 0 0 5px 0;
+}
+
+/* Editable field labels/inputs in the rewrite popup */
+.lm-rewrite-popup label {
+    display: block;
+    font-weight: bold;
+    font-size: 0.85em;
+    margin: 10px 0 3px;
+}
+
+.lm-rewrite-popup input.text_pole {
+    width: 100%;
 }
 
 .lm-popup-keys {

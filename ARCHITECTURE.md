@@ -24,8 +24,9 @@ STLorebookManipulator/
 ├── tests/
 │   ├── backup.test.js     # Unit tests for backup create/restore/download
 │   ├── diff.test.js       # Unit tests for diff accuracy and rendering
-│   ├── llm.test.js        # Unit tests for rewrite response parsing
+│   ├── llm.test.js        # Unit tests for rewrite parsing + response normalization
 │   ├── review.test.js     # Unit tests for review batching + issue parsing
+│   ├── lorebook.test.js   # Unit tests for field editing, deletion, sanitization
 │   ├── utils.test.js      # Unit tests for HTML escaping helpers
 │   └── run-tests.js       # Test runner
 ├── LICENSE
@@ -56,7 +57,12 @@ STLorebookManipulator/
 ### src/lorebook.js — Lorebook Data Access
 - **getLorebookNames()**: Wraps `getWorldInfoNames()` to list available books.
 - **loadLorebook(name)**: Wraps `loadWorldInfo(name)`, returns normalized entry array.
-- **updateEntryContent(bookName, uid, newContent)**: Loads book, updates only `content` field of matching entry, saves, reloads editor. Never touches other fields.
+- **sanitizeEntryFields(fields)**: Validates/normalizes an incoming field set. Keeps only the four editable fields (`content`, `key`, `keysecondary`, `comment`), enforces types, trims/drops empty keywords. Throws on type errors so bad input fails loudly. Unit-tested.
+- **parseKeywordString(str)**: UI helper — splits a comma-separated keyword string into a clean array.
+- **updateEntryFields(bookName, uid, fields, context)**: Loads book, writes only the sanitized editable fields of the matching entry, saves, reloads editor. All other (structural) fields are preserved.
+- **updateEntryContent(bookName, uid, newContent, context)**: Backward-compatible thin wrapper over `updateEntryFields` that updates only `content`.
+- **deleteEntry(bookName, uid, context)**: Permanently removes an entry. Caller (the UI) creates a backup first so the deletion is recoverable.
+- `EDITABLE_FIELDS` constant is the single source of truth for what this extension may write; everything else stays untouched.
 - All functions are async and handle errors with visible toast notifications.
 
 ### src/llm.js — LLM Interaction
@@ -77,11 +83,11 @@ STLorebookManipulator/
 - Diff algorithm is custom and lightweight — no external dependencies. Sufficient for prose; not optimized for code.
 
 ### src/ui.js — Popup & Interaction
-- **openMainPopup(settings, context)**: Standalone popup opened by the quick-access button. Shows the lorebook selector, the whole-book review panel (instruction box + Review button + issue list), and the entry list. Caches loaded entries so review results (which reference entries by uid) can be mapped back to real entry objects.
-- **openRewritePopup(entry, bookName, settings, context, issue=null)**: Creates ST Popup with diff view and generate/approve/reject buttons. When `issue` is provided (from a review), it shows an issue banner and appends the issue to the rewrite instruction so the fix targets it.
-- **renderEntryList(container, entries, onEntryClick)** (internal): Renders the clickable entry list.
+- **openMainPopup(settings, context)**: Standalone popup opened by the quick-access button. Shows the lorebook selector, the whole-book review panel (instruction box + Review button + issue list), and the entry list. Caches loaded entries so review results (which reference entries by uid) can be mapped back to real entry objects. Holds `loadAndRender` (refreshes the list, e.g. after a delete) and `handleDeleteEntry` (confirm → backup → delete → refresh).
+- **openRewritePopup(entry, bookName, settings, context, issue=null)**: The entry editor popup. Editable inputs for title, primary keys, secondary keys; optional **Generate Suggestion** to rewrite content (shown as a diff). **Save** collects all field edits (plus regenerated content if any), backs up, then calls `updateEntryFields`. When `issue` is provided (from a review), shows an issue banner and appends the issue to the rewrite instruction.
+- **renderEntryList(container, entries, onEntryClick, onDeleteClick)** (internal): Renders each entry with a clickable body (opens editor) and a trash button (delete). The trash click stops propagation so it doesn't also open the editor.
 - **renderIssueList(container, issues, entries, onFixClick)** (internal): Renders review issues as severity-colored cards with a clickable chip per affected entry. Chips for unresolvable uids are disabled.
-- Approve triggers: backup → updateEntryContent → close popup. Reject simply closes the popup.
+- Save triggers: backup → updateEntryFields → close popup. Delete triggers: confirm → backup → deleteEntry → refresh list. Cancel simply closes.
 
 ### src/utils.js — Shared Helpers
 - **escapeHtml(text)**: Escapes `& < > " '` for safe insertion into HTML content. Pure string implementation (no DOM dependency) so it works in both browser and Node test environments.
@@ -103,21 +109,21 @@ User selects lorebook
     ↓
 lorebook.js loads entries via ST API
     ↓
-User clicks entry → ui.js opens popup
+User clicks entry → ui.js opens editor popup
     ↓
-User picks preset / custom prompt
+User edits title / keys / secondary keys directly (optional)
     ↓
-User clicks Generate → llm.js calls generateRaw() with JSON schema
+User clicks Generate → llm.js rewrites content with JSON schema (optional)
     ↓
-llm.js parses response → returns { rewrittenContent, justification }
+diff.js computes word diff → ui.js renders highlighted diff
     ↓
-diff.js computes word diff between original and suggestion
+User clicks Save
     ↓
-ui.js renders highlighted diff in popup
-    ↓
-User clicks Approve
-    ↓
-backup.js creates backup → lorebook.js updates content field → ST editor reloads
+backup.js creates backup → lorebook.js updateEntryFields (only editable fields) → ST editor reloads
+
+Delete path:
+User clicks trash icon → confirm dialog → backup.js creates backup
+    → lorebook.js deleteEntry → list refreshes
 ```
 
 ### Whole-Book Review Flow
@@ -163,7 +169,9 @@ Loaded on init, saved via `saveSettingsDebounced()` on every change.
 |----------|-----------|
 | Vanilla JS, no build step | ST extensions load as ES modules directly. Build tools add complexity with no benefit for this scope. |
 | JSON Schema over XML | Native structured output support on modern APIs eliminates parsing failures. XML prefill trick is fragile. |
-| Only modify `content` field | Keys, triggers, and metadata are structural. Changing them risks breaking activation logic. Content-only is safest for v0.1. |
+| Editable fields limited to content/key/keysecondary/comment | These are the fields a human actually tidies. Structural fields (position, order, probability, insertion logic) are left untouched so edits can't break activation behaviour. Enforced centrally via `EDITABLE_FIELDS` + `sanitizeEntryFields`. |
+| LLM only suggests content, not keys/title | Keeping the model's output to prose (content) keeps structured output simple and low-risk. Keys/title are edited by hand in the popup, where the user has full control. |
+| Delete requires confirm + backup | Deletion is destructive. A confirmation dialog plus an automatic pre-delete backup makes every delete recoverable from Backup History. |
 | Custom diff over library | Prose diffs don't need Myers/O(NP). A simple word-level LCS is <100 lines and zero dependencies. |
 | localStorage for backups | Immediate, synchronous, no server round-trip. File download as secondary safety net. |
 | Per-entry approval workflow | Bulk apply is risky. Individual review ensures user stays in control. Bulk mode deferred. |
