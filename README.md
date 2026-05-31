@@ -1,5 +1,8 @@
 # STLorebookManipulator
 
+[![Release](https://img.shields.io/github/v/release/cspiritsong/STLorebookManipulator)](https://github.com/cspiritsong/STLorebookManipulator/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+
 A SillyTavern extension for safely rewriting and pruning lorebook entries using your active LLM connection.
 
 ## What It Does
