@@ -66,6 +66,8 @@ jQuery(async () => {
         getSettings(context).maxTokens = Math.max(256, Math.min(8192, val || 1024));
         context.saveSettingsDebounced();
     });
+
+    injectQuickAccessButtons();
 });
 
 function getSettings(context) {
@@ -215,6 +217,38 @@ function renderBackupHistory(bookName, context) {
 
         container.append(item);
     }
+}
+
+function injectQuickAccessButtons() {
+    const iconHtml = '<div class="menu_button fa-solid fa-book-open interactable lm-quick-access-icon" title="Lorebook Manipulator"></div>';
+
+    const targets = [
+        document.querySelector('.form_create_bottom_buttons_block'),
+        document.querySelector('#GroupFavDelOkBack'),
+        document.querySelector('#rm_buttons_container') ?? document.querySelector('#form_character_search_form'),
+    ];
+
+    targets.forEach((target) => {
+        if (!target) return;
+        if (target.querySelector('.lm-quick-access-icon')) return;
+
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = iconHtml.trim();
+        const icon = wrapper.firstChild;
+        if (!icon) return;
+
+        target.prepend(icon);
+
+        icon.addEventListener('click', () => {
+            const drawer = document.querySelector('.lorebook-manipulator-settings .inline-drawer-toggle');
+            if (drawer) {
+                drawer.click();
+                drawer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            } else {
+                $('#extensions_settings2').find('.lorebook-manipulator-settings .inline-drawer-toggle').trigger('click');
+            }
+        });
+    });
 }
 
 function escapeHtml(text) {

@@ -1,5 +1,16 @@
 /* === Lorebook Manipulator Styles === */
 
+/* Quick Access Icon Button */
+.lm-quick-access-icon {
+    cursor: pointer;
+    opacity: 0.8;
+    transition: opacity 0.15s ease;
+}
+
+.lm-quick-access-icon:hover {
+    opacity: 1;
+}
+
 /* Entry List */
 .lm-entry-list {
     max-height: 300px;
