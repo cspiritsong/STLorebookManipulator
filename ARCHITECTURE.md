@@ -17,7 +17,8 @@ STLorebookManipulator/
 │   ├── lorebook.js        # Load/save/reload lorebook data via ST World Info API
 │   ├── llm.js             # LLM calls via generateRaw(), JSON schema + fallback parsing
 │   ├── diff.js            # Word-level diff computation, inline/side-by-side HTML rendering
-│   └── ui.js              # Popup creation, approve/reject handlers, progress indicators
+│   ├── ui.js              # Popup creation, approve/reject handlers, progress indicators
+│   └── utils.js           # Shared HTML escaping helpers (escapeHtml, escapeAttr)
 ├── prompts/
 │   └── rewrite.hbs        # Handlebars template for rewrite system/user prompts
 ├── tests/
@@ -69,11 +70,14 @@ STLorebookManipulator/
 - Diff algorithm is custom and lightweight — no external dependencies. Sufficient for prose; not optimized for code.
 
 ### src/ui.js — Popup & Interaction
-- **openRewritePopup(entry, settings)**: Creates ST Popup with diff view, preset selector, generate/approve/reject buttons.
-- **showProgress(message)**: Displays loading state during LLM call.
-- **showError(message)**: Displays error toast with actionable guidance.
-- Approve triggers: backup → updateEntryContent → close popup → refresh entry list.
-- Reject simply closes the popup.
+- **openMainPopup(settings, context)**: Standalone popup opened by the quick-access button. Shows the lorebook selector; on selection, lists entries. Clicking an entry closes this popup and opens the rewrite popup.
+- **openRewritePopup(entry, bookName, settings, context)**: Creates ST Popup with diff view, generate/approve/reject buttons.
+- Approve triggers: backup → updateEntryContent → close popup. Reject simply closes the popup.
+
+### src/utils.js — Shared Helpers
+- **escapeHtml(text)**: Escapes `& < > " '` for safe insertion into HTML content. Pure string implementation (no DOM dependency) so it works in both browser and Node test environments.
+- **escapeAttr(text)**: Escapes quotes for safe insertion into HTML attribute values.
+- Centralizing these prevents the class of bug where a helper is used in one module but only defined in another.
 
 ### prompts/rewrite.hbs — Prompt Templates
 - Handlebars template with variables: `{{entryContent}}`, `{{customInstructions}}`

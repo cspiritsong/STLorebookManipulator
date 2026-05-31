@@ -1,6 +1,7 @@
 import { getLorebookNames, loadLorebook } from './src/lorebook.js';
 import { getBackupHistory, restoreBackup, downloadBackup } from './src/backup.js';
 import { openRewritePopup, openMainPopup, getPromptText } from './src/ui.js';
+import { escapeHtml, escapeAttr } from './src/utils.js';
 
 const MODULE_NAME = 'lorebook_manipulator';
 
@@ -267,14 +268,4 @@ function observeForQuickAccessButtons() {
             if (evt) context.eventSource.on(evt, () => setTimeout(injectQuickAccessButtons, 200));
         });
     }
-}
-
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text || '';
-    return div.innerHTML;
-}
-
-function escapeAttr(text) {
-    return (text || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }

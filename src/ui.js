@@ -2,6 +2,7 @@ import { generateRewrite } from './llm.js';
 import { computeDiff, renderInlineDiff, renderSideBySideDiff } from './diff.js';
 import { createBackup } from './backup.js';
 import { updateEntryContent, getLorebookNames, loadLorebook } from './lorebook.js';
+import { escapeHtml, escapeAttr } from './utils.js';
 
 const PROMPT_PRESETS = {
     prune: 'Shorten this entry for brevity while preserving all factual content. Remove redundancy and unnecessary elaboration.',
@@ -224,10 +225,4 @@ function showStatus(el, message, type) {
     el.textContent = message;
     el.className = `lm-status lm-status-${type}`;
     el.style.display = 'block';
-}
-
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
 }

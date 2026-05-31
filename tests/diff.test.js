@@ -1,26 +1,5 @@
 import { computeDiff, renderInlineDiff, renderSideBySideDiff } from '../src/diff.js';
 
-// Minimal DOM mock for escapeHtml (uses document.createElement)
-global.document = {
-    createElement(tag) {
-        if (tag === 'div') {
-            let _text = '';
-            return {
-                set textContent(val) { _text = String(val); },
-                get innerHTML() {
-                    return _text
-                        .replace(/&/g, '&amp;')
-                        .replace(/</g, '&lt;')
-                        .replace(/>/g, '&gt;')
-                        .replace(/"/g, '&quot;')
-                        .replace(/'/g, '&#39;');
-                },
-            };
-        }
-        return {};
-    },
-};
-
 let passed = 0;
 let failed = 0;
 

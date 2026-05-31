@@ -1,3 +1,5 @@
+import { escapeHtml } from './utils.js';
+
 export function computeDiff(oldText, newText) {
     const oldWords = tokenize(oldText);
     const newWords = tokenize(newText);
@@ -87,12 +89,6 @@ function mergeAdjacent(diffResult) {
     }
 
     return merged;
-}
-
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
 }
 
 export function renderInlineDiff(diffResult) {
