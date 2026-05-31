@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Quick-access button now uses MutationObserver + ST events so it appears on dynamically rendered UI
 - Quick-access button opens a standalone popup instead of trying to navigate to a settings drawer
 - `escapeAttr is not defined` ReferenceError when opening the main popup (helper was used in ui.js but only defined in index.js). Consolidated escaping helpers into `src/utils.js` and added a regression test.
+- Clicking an entry did nothing because the code called `popup.close()`, which does not exist on SillyTavern's Popup class. Now uses `completeCancelled()` (3 call sites).
+- LLM token limit was silently ignored: `generateRaw` expects `responseLength`, not `max_tokens`. Corrected the parameter name in `src/llm.js`.
 
 ---
 

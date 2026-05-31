@@ -45,10 +45,12 @@ ${entryContent}
 Rewrite this entry according to the instructions above. Return your response as JSON with "rewrittenContent" and "justification" fields.`;
 
     try {
+        // ST's generateRaw uses `responseLength` (not `max_tokens`).
+        // When `jsonSchema` is set, it returns the extracted JSON string directly.
         const result = await context.generateRaw({
             systemPrompt,
             prompt: userPrompt,
-            max_tokens: maxTokens || 1024,
+            responseLength: maxTokens || 1024,
             jsonSchema: REWRITE_SCHEMA,
         });
 

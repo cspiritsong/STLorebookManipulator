@@ -81,7 +81,8 @@ export async function openMainPopup(settings, context) {
                     <div class="lm-entry-preview">${escapeHtml(preview)}</div>
                 `;
                 item.addEventListener('click', () => {
-                    popup.close();
+                    // ST's Popup has no close(); completeCancelled() dismisses it.
+                    popup.completeCancelled();
                     openRewritePopup(entry, bookName, settings, context);
                 });
 
@@ -175,7 +176,7 @@ export async function openRewritePopup(entry, bookName, settings, context) {
             showStatus(statusEl, 'Changes applied successfully!', 'success');
             toastr.success('Entry updated successfully.');
 
-            setTimeout(() => popup.close(), 1000);
+            setTimeout(() => popup.completeCancelled(), 1000);
         } catch (e) {
             console.error('[LorebookManipulator] Apply failed:', e);
             showStatus(statusEl, `Failed to apply: ${e.message}`, 'error');
@@ -186,7 +187,7 @@ export async function openRewritePopup(entry, bookName, settings, context) {
     });
 
     rejectBtn?.addEventListener('click', () => {
-        popup.close();
+        popup.completeCancelled();
     });
 }
 
