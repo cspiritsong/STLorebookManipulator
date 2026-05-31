@@ -1,0 +1,14 @@
+{
+    "display_name": "Lorebook Manipulator",
+    "loading_order": 10,
+    "requires": [],
+    "optional": [],
+    "dependencies": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "STLorebookManipulator Contributors",
+    "version": "0.1.0",
+    "homePage": "https://github.com/YOUR_USERNAME/STLorebookManipulator",
+    "auto_update": true,
+    "minimum_client_version": "1.12.0"
+}

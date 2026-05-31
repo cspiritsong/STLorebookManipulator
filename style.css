@@ -1,0 +1,214 @@
+/* === Lorebook Manipulator Styles === */
+
+/* Entry List */
+.lm-entry-list {
+    max-height: 300px;
+    overflow-y: auto;
+    margin-top: 5px;
+}
+
+.lm-entry-item {
+    padding: 8px 10px;
+    margin-bottom: 4px;
+    background: var(--SmartThemeBlurTintColor, #2a2a2a);
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.lm-entry-item:hover {
+    background: var(--SmartThemeEmotionColor, #3a3a3a);
+}
+
+.lm-entry-item.disabled {
+    opacity: 0.5;
+}
+
+.lm-entry-name {
+    font-weight: bold;
+    margin-bottom: 2px;
+}
+
+.lm-entry-keys {
+    font-size: 0.85em;
+    color: var(--SmartThemeSubtleColor, #999);
+}
+
+.lm-entry-preview {
+    font-size: 0.85em;
+    color: var(--SmartThemeSubtleColor, #aaa);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+/* Diff Container */
+.lm-diff-container {
+    margin: 15px 0;
+    min-height: 60px;
+}
+
+.lm-placeholder-text {
+    color: var(--SmartThemeSubtleColor, #888);
+    font-style: italic;
+    text-align: center;
+    padding: 20px;
+}
+
+/* Inline Diff */
+.lm-diff-inline {
+    line-height: 1.6;
+    word-wrap: break-word;
+    white-space: pre-wrap;
+}
+
+.lm-diff-equal {
+    /* no special styling for unchanged text */
+}
+
+.lm-diff-delete {
+    background-color: rgba(255, 0, 0, 0.15);
+    color: #ff6b6b;
+    text-decoration: line-through;
+    padding: 1px 2px;
+    border-radius: 2px;
+}
+
+.lm-diff-insert {
+    background-color: rgba(0, 255, 0, 0.15);
+    color: #6bff6b;
+    text-decoration: underline;
+    padding: 1px 2px;
+    border-radius: 2px;
+}
+
+/* Side-by-Side Diff */
+.lm-diff-side-by-side {
+    display: flex;
+    gap: 10px;
+}
+
+.lm-diff-col {
+    flex: 1;
+    min-width: 0;
+}
+
+.lm-diff-label {
+    font-weight: bold;
+    font-size: 0.85em;
+    margin-bottom: 5px;
+    padding-bottom: 3px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #444);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.lm-diff-content {
+    line-height: 1.6;
+    word-wrap: break-word;
+    white-space: pre-wrap;
+    min-height: 40px;
+}
+
+.lm-diff-placeholder {
+    opacity: 0;
+    user-select: none;
+}
+
+/* Justification */
+.lm-justification {
+    margin: 10px 0;
+    padding: 8px 12px;
+    background: var(--SmartThemeBlurTintColor, #2a2a2a);
+    border-left: 3px solid var(--SmartThemeQuoteColor, #f0c040);
+    border-radius: 0 4px 4px 0;
+    font-size: 0.9em;
+}
+
+/* Status Messages */
+.lm-status {
+    margin: 10px 0;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    display: none;
+}
+
+.lm-status-loading {
+    background: rgba(100, 149, 237, 0.15);
+    color: #6495ed;
+}
+
+.lm-status-success {
+    background: rgba(0, 200, 0, 0.15);
+    color: #6bff6b;
+}
+
+.lm-status-error {
+    background: rgba(255, 80, 80, 0.15);
+    color: #ff6b6b;
+}
+
+/* Popup Actions */
+.lm-popup-title {
+    margin: 0 0 5px 0;
+}
+
+.lm-popup-keys {
+    font-size: 0.85em;
+    color: var(--SmartThemeSubtleColor, #999);
+    margin-bottom: 10px;
+}
+
+.lm-popup-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 15px;
+    justify-content: flex-end;
+}
+
+.lm-popup-actions button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* Backup History */
+.lm-backup-history {
+    max-height: 200px;
+    overflow-y: auto;
+    margin-top: 5px;
+}
+
+.lm-no-backups {
+    color: var(--SmartThemeSubtleColor, #888);
+    font-style: italic;
+    font-size: 0.9em;
+}
+
+.lm-backup-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 8px;
+    margin-bottom: 4px;
+    background: var(--SmartThemeBlurTintColor, #2a2a2a);
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    border-radius: 4px;
+    font-size: 0.85em;
+}
+
+.lm-backup-date {
+    flex: 1;
+}
+
+.lm-backup-actions {
+    display: flex;
+    gap: 5px;
+}
+
+.lm-backup-actions button {
+    padding: 3px 8px;
+    font-size: 0.8em;
+}

@@ -1,0 +1,72 @@
+<div class="lorebook-manipulator-settings">
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b data-i18n="Lorebook Manipulator">Lorebook Manipulator</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        </div>
+        <div class="inline-drawer-content">
+
+            <label for="lm_lorebook_select">
+                <span data-i18n="Select Lorebook">Select Lorebook</span>
+            </label>
+            <select id="lm_lorebook_select" class="text_pole">
+                <option value="" disabled selected>-- Choose a lorebook --</option>
+            </select>
+
+            <div id="lm_entry_list_container" style="display:none; margin-top:10px;">
+                <label>
+                    <span data-i18n="Entries">Entries</span>
+                </label>
+                <div id="lm_entry_list" class="lm-entry-list"></div>
+            </div>
+
+            <hr />
+
+            <label for="lm_diff_style">
+                <span data-i18n="Diff Style">Diff Style</span>
+            </label>
+            <select id="lm_diff_style" class="text_pole">
+                <option value="inline">Inline</option>
+                <option value="side-by-side">Side-by-Side</option>
+            </select>
+
+            <label for="lm_backup_retention">
+                <span data-i18n="Backup Retention">Backups to Keep</span>
+            </label>
+            <input id="lm_backup_retention" type="number" min="1" max="50" class="text_pole" value="5" />
+
+            <label for="lm_prompt_preset">
+                <span data-i18n="Rewrite Prompt Preset">Rewrite Prompt Preset</span>
+            </label>
+            <select id="lm_prompt_preset" class="text_pole">
+                <option value="prune">Prune for Brevity</option>
+                <option value="clarify">Clarify Without Shortening</option>
+                <option value="grammar">Fix Grammar &amp; Style</option>
+                <option value="custom">Custom...</option>
+            </select>
+
+            <div id="lm_custom_prompt_container" style="display:none; margin-top:5px;">
+                <label for="lm_custom_prompt">
+                    <span data-i18n="Custom Instructions">Custom Instructions</span>
+                </label>
+                <textarea id="lm_custom_prompt" class="text_pole textarea_compact" rows="4"
+                    placeholder="Enter your rewrite instructions here..."></textarea>
+            </div>
+
+            <label for="lm_max_tokens">
+                <span data-i18n="Max Response Tokens">Max Response Tokens</span>
+            </label>
+            <input id="lm_max_tokens" type="number" min="256" max="8192" step="256" class="text_pole" value="1024" />
+
+            <hr />
+
+            <label>
+                <span data-i18n="Backup History">Backup History</span>
+            </label>
+            <div id="lm_backup_history" class="lm-backup-history">
+                <p class="lm-no-backups">No backups yet.</p>
+            </div>
+
+        </div>
+    </div>
+</div>
