@@ -223,3 +223,121 @@
     padding: 3px 8px;
     font-size: 0.8em;
 }
+
+/* === Whole-Book Review === */
+
+.lm-review-section {
+    margin-top: 12px;
+    padding: 10px;
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    border-radius: 6px;
+    background: var(--SmartThemeBlurTintColor, #242424);
+}
+
+.lm-review-section label {
+    font-weight: bold;
+    display: block;
+    margin-bottom: 5px;
+}
+
+.lm-review-section textarea {
+    width: 100%;
+    margin-bottom: 8px;
+}
+
+/* Issue list */
+.lm-issue-list {
+    margin-top: 10px;
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.lm-issue-card {
+    padding: 10px;
+    margin-bottom: 8px;
+    border-radius: 5px;
+    border-left: 4px solid var(--SmartThemeBorderColor, #666);
+    background: var(--SmartThemeBlurTintColor, #2a2a2a);
+}
+
+/* Severity color coding (left border) */
+.lm-issue-low {
+    border-left-color: #6495ed;
+}
+
+.lm-issue-medium {
+    border-left-color: #f0c040;
+}
+
+.lm-issue-high {
+    border-left-color: #ff6b6b;
+}
+
+.lm-issue-header {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.lm-issue-type {
+    font-weight: bold;
+    text-transform: uppercase;
+    font-size: 0.75em;
+    letter-spacing: 0.5px;
+}
+
+.lm-issue-severity {
+    font-size: 0.7em;
+    text-transform: uppercase;
+    opacity: 0.7;
+    border: 1px solid currentColor;
+    border-radius: 3px;
+    padding: 1px 5px;
+}
+
+.lm-issue-desc {
+    font-size: 0.9em;
+    line-height: 1.5;
+    margin-bottom: 8px;
+    white-space: pre-wrap;
+}
+
+.lm-issue-entries {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.lm-issue-chip {
+    font-size: 0.8em;
+    padding: 3px 10px;
+}
+
+.lm-issue-chip:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Issue banner shown inside the rewrite popup when fixing a flagged entry */
+.lm-issue-banner {
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    border-radius: 0 4px 4px 0;
+    border-left: 4px solid var(--SmartThemeBorderColor, #666);
+    background: var(--SmartThemeBlurTintColor, #2a2a2a);
+    font-size: 0.9em;
+    line-height: 1.5;
+}
+
+.lm-issue-banner.lm-issue-low {
+    border-left-color: #6495ed;
+}
+
+.lm-issue-banner.lm-issue-medium {
+    border-left-color: #f0c040;
+}
+
+.lm-issue-banner.lm-issue-high {
+    border-left-color: #ff6b6b;
+}

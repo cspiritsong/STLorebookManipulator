@@ -8,6 +8,7 @@ const __dirname = dirname(__filename);
 const tests = [
     'utils.test.js',
     'llm.test.js',
+    'review.test.js',
     'diff.test.js',
     'backup.test.js',
 ];

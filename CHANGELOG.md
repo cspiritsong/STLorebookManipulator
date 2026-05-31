@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-31
+
+### Added
+- **Whole-book review**: a "Review & Recommend Fixes" panel in the main popup that asks the LLM to scan all entries and report issues (duplicate, overlap, verbose, contradiction, other).
+- Optional custom focus instructions for the review (e.g. "find duplicate lore"). Blank = general review.
+- Auto-batching of large lorebooks (`batchEntries`) so reviews stay within the model's context window.
+- Combined, severity-colored issue list. Clicking an affected entry opens the rewrite popup pre-seeded with the flagged issue, then flows through the existing diff/approve path.
+- `reviewEntries` / `parseReviewResponse` in `src/llm.js`, with a dedicated review JSON schema.
+- `tests/review.test.js`: 23 tests covering batching and issue-response parsing.
+
+### Changed
+- `openRewritePopup` now accepts an optional `issue` argument and shows an issue banner when fixing a flagged entry.
+- Refactored JSON extraction in `src/llm.js` into a shared `extractJson` helper used by both the rewrite and review parsers.
+- Bumped version to 0.2.0.
+
+## [0.1.0] - 2026-05-31
+
 ### Added
 - Project scaffolding: LICENSE, README, ARCHITECTURE, CONTRIBUTING, KNOWN-ISSUES
 - Initial extension structure (manifest.json, index.js, settings.html)

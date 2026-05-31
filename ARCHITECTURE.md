@@ -15,16 +15,19 @@ STLorebookManipulator/
 ├── src/
 │   ├── backup.js          # Backup history management, restore, file download
 │   ├── lorebook.js        # Load/save/reload lorebook data via ST World Info API
-│   ├── llm.js             # LLM calls via generateRaw(), JSON schema + fallback parsing
+│   ├── llm.js             # LLM calls via generateRaw(): single-entry rewrite + whole-book review (batching, JSON schema parsing)
 │   ├── diff.js            # Word-level diff computation, inline/side-by-side HTML rendering
-│   ├── ui.js              # Popup creation, approve/reject handlers, progress indicators
+│   ├── ui.js              # Popup creation, review/issue list, approve/reject handlers
 │   └── utils.js           # Shared HTML escaping helpers (escapeHtml, escapeAttr)
 ├── prompts/
 │   └── rewrite.hbs        # Handlebars template for rewrite system/user prompts
 ├── tests/
 │   ├── backup.test.js     # Unit tests for backup create/restore/download
 │   ├── diff.test.js       # Unit tests for diff accuracy and rendering
-│   └── llm.test.js        # Unit tests for LLM response parsing (mocked)
+│   ├── llm.test.js        # Unit tests for rewrite response parsing
+│   ├── review.test.js     # Unit tests for review batching + issue parsing
+│   ├── utils.test.js      # Unit tests for HTML escaping helpers
+│   └── run-tests.js       # Test runner
 ├── LICENSE
 ├── README.md
 ├── ARCHITECTURE.md         # This file
@@ -57,11 +60,13 @@ STLorebookManipulator/
 - All functions are async and handle errors with visible toast notifications.
 
 ### src/llm.js — LLM Interaction
-- **generateRewrite(entryContent, promptText, maxTokens)**: Calls `generateRaw()` with structured output.
-  - Primary: JSON schema `{ rewrittenContent: string, justification: string }` via native mode.
-  - Fallback: Prompt engineering asking for JSON in code block, parsed manually.
-- **parseLLMResponse(rawText)**: Extracts JSON from response (handles code fences, surrounding text). Validates against expected shape. Throws descriptive error on failure.
-- Uses active ST connection profile automatically — no separate API config needed.
+- **generateRewrite(entryContent, promptText, maxTokens, context)**: Calls `generateRaw()` with structured output for a single-entry rewrite. Returns `{ rewrittenContent, justification }`.
+- **reviewEntries(entries, instructions, maxTokens, context, options)**: Whole-book review. Auto-batches entries via `batchEntries`, sends each batch to `generateRaw()` with the review JSON schema, and combines the results into one issue list. Reports progress via `options.onProgress(current, total)`. Returns `{ issues, batchCount }`.
+- **batchEntries(entries, maxBatchChars=12000)**: Pure function that splits entries into batches so each batch's combined text stays under a character budget. An oversized single entry gets its own batch (never dropped). Unit-tested directly.
+- **parseLLMResponse(rawText)**: Validates and returns the rewrite result.
+- **parseReviewResponse(rawText)**: Validates and sanitizes the review result — drops malformed/description-less issues, coerces invalid type/severity to safe defaults, coerces string uids to numbers.
+- **extractJson(rawText)** (internal): Shared JSON extraction (handles code fences, surrounding prose). Used by both parsers so the logic lives in one place.
+- ST's `generateRaw` uses `responseLength` (not `max_tokens`) and, when `jsonSchema` is set, returns the extracted JSON string directly. Uses the active ST connection automatically.
 
 ### src/diff.js — Diff Computation & Rendering
 - **computeDiff(oldText, newText)**: Word-level LCS-based diff. Returns array of `{ type: 'equal'|'insert'|'delete', value: string }`.
@@ -70,8 +75,10 @@ STLorebookManipulator/
 - Diff algorithm is custom and lightweight — no external dependencies. Sufficient for prose; not optimized for code.
 
 ### src/ui.js — Popup & Interaction
-- **openMainPopup(settings, context)**: Standalone popup opened by the quick-access button. Shows the lorebook selector; on selection, lists entries. Clicking an entry closes this popup and opens the rewrite popup.
-- **openRewritePopup(entry, bookName, settings, context)**: Creates ST Popup with diff view, generate/approve/reject buttons.
+- **openMainPopup(settings, context)**: Standalone popup opened by the quick-access button. Shows the lorebook selector, the whole-book review panel (instruction box + Review button + issue list), and the entry list. Caches loaded entries so review results (which reference entries by uid) can be mapped back to real entry objects.
+- **openRewritePopup(entry, bookName, settings, context, issue=null)**: Creates ST Popup with diff view and generate/approve/reject buttons. When `issue` is provided (from a review), it shows an issue banner and appends the issue to the rewrite instruction so the fix targets it.
+- **renderEntryList(container, entries, onEntryClick)** (internal): Renders the clickable entry list.
+- **renderIssueList(container, issues, entries, onFixClick)** (internal): Renders review issues as severity-colored cards with a clickable chip per affected entry. Chips for unresolvable uids are disabled.
 - Approve triggers: backup → updateEntryContent → close popup. Reject simply closes the popup.
 
 ### src/utils.js — Shared Helpers
@@ -111,6 +118,26 @@ User clicks Approve
 backup.js creates backup → lorebook.js updates content field → ST editor reloads
 ```
 
+### Whole-Book Review Flow
+
+```
+User selects lorebook → ui.js caches entries
+    ↓
+User (optionally) types focus instructions → clicks "Review & Recommend Fixes"
+    ↓
+llm.js batchEntries() splits entries to fit the context budget
+    ↓
+For each batch: generateRaw() with the review JSON schema (progress reported)
+    ↓
+llm.js parseReviewResponse() sanitizes + combines into one issue list
+    ↓
+ui.js renderIssueList() shows severity-colored cards with per-entry "fix" chips
+    ↓
+User clicks a chip → openRewritePopup(entry, ..., issue) stacked on top
+    ↓
+(continues into the single-entry rewrite flow above, pre-seeded with the issue)
+```
+
 ## Settings Persistence
 
 Settings stored in `SillyTavern.getContext().extensionSettings['lorebook_manipulator']`:
@@ -136,10 +163,13 @@ Loaded on init, saved via `saveSettingsDebounced()` on every change.
 | Only modify `content` field | Keys, triggers, and metadata are structural. Changing them risks breaking activation logic. Content-only is safest for v0.1. |
 | Custom diff over library | Prose diffs don't need Myers/O(NP). A simple word-level LCS is <100 lines and zero dependencies. |
 | localStorage for backups | Immediate, synchronous, no server round-trip. File download as secondary safety net. |
-| Per-entry approval workflow | Bulk apply is risky. Individual review ensures user stays in control. Bulk mode deferred to v0.2. |
+| Per-entry approval workflow | Bulk apply is risky. Individual review ensures user stays in control. Bulk mode deferred. |
+| Whole-book review returns an issue list, not direct rewrites | Keeps the user in control: the review surfaces problems, then each fix goes through the existing per-entry diff/approve flow. No mass changes. |
+| Auto-batch by character budget | Large lorebooks exceed the model's context window. Batching by a char budget (default 12000) keeps each request safe. Tradeoff: issues spanning two batches can't be detected (see Known Unstable Areas). |
 
 ## Known Unstable Areas
 
+- **Cross-batch review blind spot**: The whole-book review processes entries in batches. The model only sees one batch at a time, so an issue spanning two batches (e.g. duplicate entries that land in different batches) cannot be detected. Most personal lorebooks fit in a single batch, so this only affects very large books.
 - **LLM fallback parsing**: When native JSON schema isn't supported by the backend, we rely on prompt engineering + regex extraction. Models that ignore instructions may still produce unparseable output. This is mitigated by clear error messages but cannot be fully eliminated.
 - **localStorage size limits**: Typically 5-10MB per origin. Large lorebooks with many backups could hit this. Backup retention limit exists to mitigate, but no warning is shown yet when approaching capacity.
 - **ST API stability**: Extension uses `generateRaw()`, `loadWorldInfo()`, `saveWorldInfo()` which are internal ST APIs. Future ST updates could change signatures. Pinned to minimum_client_version 1.12.0 in manifest.

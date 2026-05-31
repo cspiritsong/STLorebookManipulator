@@ -8,6 +8,7 @@ A SillyTavern extension for safely rewriting and pruning lorebook entries using 
 ## What It Does
 
 - Browse entries in any of your SillyTavern lorebooks
+- **Review the whole book**: ask the LLM to scan all entries and recommend fixes (duplicates, overlap, verbosity, contradictions). Large books are auto-batched to fit the model's context window.
 - Send individual entries to the LLM with a rewrite/prune prompt
 - Review suggested changes in a highlighted before/after diff (inline or side-by-side)
 - Approve or reject each suggestion individually
@@ -41,22 +42,32 @@ Or manually:
 
 ## Usage
 
-1. Open **Extensions** tab → expand **Lorebook Manipulator** drawer
-2. Select a lorebook from the dropdown
-3. Click an entry to open the rewrite popup
-4. Choose a rewrite preset (Prune / Clarify / Fix Grammar) or enter a custom prompt
-5. Click **Generate Suggestion**
-6. Review the highlighted diff
-7. Click **Approve** to apply or **Reject** to discard
-8. Use **Backup History** in settings to restore any previous state
+Click the book icon (open-book) added to the character sheet, group panel, and right-hand button bar to open the manipulator. Then:
+
+1. Select a lorebook from the dropdown
+2. The entry list appears, along with a **Review the whole book** panel
+
+**To rewrite a single entry:**
+1. Click an entry to open the rewrite popup
+2. Click **Generate Suggestion** (uses your configured rewrite preset or custom prompt)
+3. Review the highlighted diff
+4. Click **Approve** to apply (auto-backs up first) or **Reject** to discard
+
+**To review the whole book:**
+1. (Optional) Type what to focus on in the review box (e.g. "find duplicate lore"). Leave blank for a general review.
+2. Click **Review & Recommend Fixes**. Large books are automatically split into batches.
+3. A list of issues appears, color-coded by severity (duplicate, overlap, verbose, contradiction, other)
+4. Click an affected entry on any issue to open the rewrite popup, pre-filled with that issue, and fix it through the normal diff/approve flow
+
+Use **Backup History** in the extension settings drawer to restore any previous state.
 
 ## Configuration
 
-Open the extension settings drawer to configure:
+Open the **Extensions** tab → **Lorebook Manipulator** settings drawer to configure:
 
 - **Diff Style**: Inline (single column) or Side-by-Side (two columns)
 - **Backup Retention**: Number of backups to keep (default: 5)
-- **Rewrite Prompt**: Choose a preset or enter custom instructions
+- **Rewrite Prompt**: Choose a preset (Prune / Clarify / Fix Grammar) or enter custom instructions
 - **Max Tokens**: Maximum response length for LLM calls
 
 ## Safety
