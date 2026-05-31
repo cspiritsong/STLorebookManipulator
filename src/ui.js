@@ -92,8 +92,10 @@ export async function openMainPopup(settings, context) {
             entryListEl,
             entries,
             (entry) => {
-                popup.completeCancelled();
-                openRewritePopup(entry, bookName, settings, context);
+                // Stack the editor on top of this popup so Cancel returns here
+                // instead of closing everything. Refresh the list on close so
+                // any saved title/key/content edits are reflected.
+                openRewritePopup(entry, bookName, settings, context, null, () => loadAndRender(bookName));
             },
             (entry) => handleDeleteEntry(entry, bookName),
         );
@@ -274,7 +276,7 @@ function renderIssueList(container, issues, entries, onFixClick) {
     }
 }
 
-export async function openRewritePopup(entry, bookName, settings, context, issue = null) {
+export async function openRewritePopup(entry, bookName, settings, context, issue = null, onClose = null) {
     const { Popup, POPUP_TYPE } = context;
 
     // Base instruction comes from the preset/custom prompt. When the user
@@ -290,11 +292,17 @@ export async function openRewritePopup(entry, bookName, settings, context, issue
     const popup = new Popup(popupHtml, POPUP_TYPE.TEXT, '', {
         wide: true,
         okButton: null,
-        cancelButton: 'Close',
+        cancelButton: 'Cancel',
         allowVerticalScrolling: true,
     });
 
-    popup.show();
+    // show() resolves when the popup is dismissed (Save, Cancel, or Esc).
+    // Run onClose afterwards so the caller can refresh its view. We don't
+    // await here because the handler setup below must run synchronously
+    // while the popup's DOM is present.
+    popup.show().then(() => {
+        if (typeof onClose === 'function') onClose();
+    });
 
     const container = document.querySelector('.lm-rewrite-popup');
     if (!container) return;

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-05-31
+
+### Fixed
+- Pressing **Cancel** (or Esc) in the entry editor closed the entire manipulator instead of returning to the entry list. The editor now stacks on top of the main popup and returns to it on close. The entry list also refreshes on close so saved edits show immediately. Renamed the editor's close button from "Close" to "Cancel" for clarity.
+
 ## [0.4.1] - 2026-05-31
 
 ### Fixed
