@@ -22,7 +22,7 @@ This extension solves that by keeping you in control at every step: the LLM sugg
 2. Go to **Extensions** → **Install Extension**
 3. Paste this repository URL:
    ```
-   https://github.com/YOUR_USERNAME/STLorebookManipulator
+   https://github.com/cspiritsong/STLorebookManipulator
    ```
 4. Enable **Lorebook Manipulator** in the extensions list
 

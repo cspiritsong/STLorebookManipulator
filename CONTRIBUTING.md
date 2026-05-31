@@ -6,7 +6,7 @@ Thank you for your interest in contributing to STLorebookManipulator.
 
 1. Clone the repository into your SillyTavern extensions folder:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/STLorebookManipulator.git \
+   git clone https://github.com/cspiritsong/STLorebookManipulator.git \
      data/<user-handle>/extensions/STLorebookManipulator
    ```
 2. Reload SillyTavern (F5 or restart)
