@@ -1,7 +1,7 @@
 import { generateRewrite } from './llm.js';
 import { computeDiff, renderInlineDiff, renderSideBySideDiff } from './diff.js';
 import { createBackup } from './backup.js';
-import { updateEntryContent } from './lorebook.js';
+import { updateEntryContent, getLorebookNames, loadLorebook } from './lorebook.js';
 
 const PROMPT_PRESETS = {
     prune: 'Shorten this entry for brevity while preserving all factual content. Remove redundancy and unnecessary elaboration.',
@@ -14,6 +14,83 @@ export function getPromptText(preset, customPrompt) {
         return customPrompt.trim();
     }
     return PROMPT_PRESETS[preset] || PROMPT_PRESETS.prune;
+}
+
+export async function openMainPopup(settings, context) {
+    const { Popup, POPUP_TYPE } = context;
+
+    const bookNames = getLorebookNames(context);
+
+    let optionsHtml = '<option value="" disabled selected>-- Choose a lorebook --</option>';
+    for (const name of bookNames) {
+        optionsHtml += `<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`;
+    }
+
+    const popupHtml = `<div class="lm-main-popup">
+        <h3>Lorebook Manipulator</h3>
+        <label for="lm_popup_book_select">Select Lorebook</label>
+        <select id="lm_popup_book_select" class="text_pole">${optionsHtml}</select>
+        <div id="lm_popup_entry_list" class="lm-entry-list" style="display:none; margin-top:10px;"></div>
+    </div>`;
+
+    const popup = new Popup(popupHtml, POPUP_TYPE.TEXT, '', {
+        wide: true,
+        okButton: null,
+        cancelButton: 'Close',
+        allowVerticalScrolling: true,
+    });
+
+    popup.show();
+
+    const container = document.querySelector('.lm-main-popup');
+    if (!container) return;
+
+    const select = container.querySelector('#lm_popup_book_select');
+    const entryListEl = container.querySelector('#lm_popup_entry_list');
+
+    select?.addEventListener('change', async () => {
+        const bookName = select.value;
+        if (!bookName) return;
+
+        try {
+            entryListEl.innerHTML = '<p class="lm-no-backups">Loading...</p>';
+            entryListEl.style.display = 'block';
+
+            const entries = await loadLorebook(bookName, context);
+
+            if (entries.length === 0) {
+                entryListEl.innerHTML = '<p class="lm-no-backups">No entries in this lorebook.</p>';
+                return;
+            }
+
+            entryListEl.innerHTML = '';
+            const sorted = [...entries].sort((a, b) => (b.order ?? 0) - (a.order ?? 0));
+
+            for (const entry of sorted) {
+                const name = entry.comment || `Entry #${entry.uid}`;
+                const keys = (entry.key || []).join(', ') || '(no keys)';
+                const preview = (entry.content || '').substring(0, 80) + ((entry.content || '').length > 80 ? '...' : '');
+                const disabledClass = entry.disable ? ' disabled' : '';
+
+                const item = document.createElement('div');
+                item.className = `lm-entry-item${disabledClass}`;
+                item.innerHTML = `
+                    <div class="lm-entry-name">${escapeHtml(name)}</div>
+                    <div class="lm-entry-keys">${escapeHtml(keys)}</div>
+                    <div class="lm-entry-preview">${escapeHtml(preview)}</div>
+                `;
+                item.addEventListener('click', () => {
+                    popup.close();
+                    openRewritePopup(entry, bookName, settings, context);
+                });
+
+                entryListEl.appendChild(item);
+            }
+        } catch (e) {
+            console.error('[LorebookManipulator] Failed to load entries:', e);
+            entryListEl.innerHTML = `<p class="lm-no-backups">Error: ${escapeHtml(e.message)}</p>`;
+        }
+    });
 }
 
 export async function openRewritePopup(entry, bookName, settings, context) {

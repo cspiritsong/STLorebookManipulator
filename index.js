@@ -1,6 +1,6 @@
 import { getLorebookNames, loadLorebook } from './src/lorebook.js';
 import { getBackupHistory, restoreBackup, downloadBackup } from './src/backup.js';
-import { openRewritePopup, getPromptText } from './src/ui.js';
+import { openRewritePopup, openMainPopup, getPromptText } from './src/ui.js';
 
 const MODULE_NAME = 'lorebook_manipulator';
 
@@ -237,18 +237,9 @@ function injectQuickAccessButtons() {
         icon.title = 'Lorebook Manipulator';
 
         icon.addEventListener('click', () => {
-            const extensionsTab = document.querySelector('#extensions_tab, [data-tab="extensions"]');
-            if (extensionsTab) extensionsTab.click();
-
-            setTimeout(() => {
-                const drawer = document.querySelector('.lorebook-manipulator-settings .inline-drawer-toggle');
-                if (drawer) {
-                    const content = drawer.nextElementSibling;
-                    const isOpen = content && content.style.display !== 'none';
-                    if (!isOpen) drawer.click();
-                    setTimeout(() => drawer.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
-                }
-            }, 150);
+            const context = SillyTavern.getContext();
+            const settings = getSettings(context);
+            openMainPopup(settings, context);
         });
 
         target.prepend(icon);
