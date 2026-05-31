@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-05-31
+
+### Fixed
+- A stray `});` in `src/ui.js` caused a syntax error that broke the whole module load, which made the quick-access book icon disappear after the v0.4.0 update. Removed the duplicate token.
+
+### Added
+- `tests/syntax.test.js`: runs `node --check` on every shipped JS file (including `ui.js`/`index.js`, which the other tests can't import because they reference browser/SillyTavern globals). This would have caught the v0.4.0 break before release.
+
 ## [0.4.0] - 2026-05-31
 
 ### Added

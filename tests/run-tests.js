@@ -6,6 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const tests = [
+    'syntax.test.js',
     'utils.test.js',
     'llm.test.js',
     'review.test.js',

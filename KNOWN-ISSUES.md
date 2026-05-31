@@ -47,6 +47,7 @@
 
 ## Resolved Issues
 
+- **Book icon disappeared after v0.4.0 update** (v0.4.1) — a stray `});` in `ui.js` broke module load. Fixed, and added `tests/syntax.test.js` (`node --check` on every JS file) to catch this class of error before release.
 - **`escapeAttr is not defined` in main popup** (v0.1) — escaping helpers were duplicated across files; consolidated into `src/utils.js`.
 - **Clicking an entry did nothing** (v0.1) — code called a non-existent `popup.close()`; now uses ST's `completeCancelled()`.
 - **Token limit ignored** (v0.1) — `generateRaw` expects `responseLength`, not `max_tokens`; corrected.

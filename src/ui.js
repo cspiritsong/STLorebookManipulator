@@ -380,7 +380,6 @@ export async function openRewritePopup(entry, bookName, settings, context, issue
             rejectBtn.disabled = false;
         }
     });
-    });
 
     rejectBtn?.addEventListener('click', () => {
         popup.completeCancelled();
