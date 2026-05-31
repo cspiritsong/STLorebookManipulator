@@ -67,7 +67,7 @@ jQuery(async () => {
         context.saveSettingsDebounced();
     });
 
-    injectQuickAccessButtons();
+    observeForQuickAccessButtons();
 });
 
 function getSettings(context) {
@@ -220,35 +220,62 @@ function renderBackupHistory(bookName, context) {
 }
 
 function injectQuickAccessButtons() {
-    const iconHtml = '<div class="menu_button fa-solid fa-book-open interactable lm-quick-access-icon" title="Lorebook Manipulator"></div>';
-
-    const targets = [
-        document.querySelector('.form_create_bottom_buttons_block'),
-        document.querySelector('#GroupFavDelOkBack'),
-        document.querySelector('#rm_buttons_container') ?? document.querySelector('#form_character_search_form'),
+    const selectors = [
+        '.form_create_bottom_buttons_block',
+        '#GroupFavDelOkBack',
+        '#rm_buttons_container',
+        '#form_character_search_form',
     ];
 
-    targets.forEach((target) => {
+    selectors.forEach((selector) => {
+        const target = document.querySelector(selector);
         if (!target) return;
         if (target.querySelector('.lm-quick-access-icon')) return;
 
-        const wrapper = document.createElement('div');
-        wrapper.innerHTML = iconHtml.trim();
-        const icon = wrapper.firstChild;
-        if (!icon) return;
-
-        target.prepend(icon);
+        const icon = document.createElement('div');
+        icon.className = 'menu_button fa-solid fa-book-open interactable lm-quick-access-icon';
+        icon.title = 'Lorebook Manipulator';
 
         icon.addEventListener('click', () => {
-            const drawer = document.querySelector('.lorebook-manipulator-settings .inline-drawer-toggle');
-            if (drawer) {
-                drawer.click();
-                drawer.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            } else {
-                $('#extensions_settings2').find('.lorebook-manipulator-settings .inline-drawer-toggle').trigger('click');
-            }
+            const extensionsTab = document.querySelector('#extensions_tab, [data-tab="extensions"]');
+            if (extensionsTab) extensionsTab.click();
+
+            setTimeout(() => {
+                const drawer = document.querySelector('.lorebook-manipulator-settings .inline-drawer-toggle');
+                if (drawer) {
+                    const content = drawer.nextElementSibling;
+                    const isOpen = content && content.style.display !== 'none';
+                    if (!isOpen) drawer.click();
+                    setTimeout(() => drawer.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+                }
+            }, 150);
         });
+
+        target.prepend(icon);
     });
+}
+
+function observeForQuickAccessButtons() {
+    injectQuickAccessButtons();
+
+    const observer = new MutationObserver(() => {
+        injectQuickAccessButtons();
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    const context = SillyTavern.getContext();
+    if (context?.eventSource && context?.eventTypes) {
+        const events = [
+            context.eventTypes.CHAT_CHANGED,
+            context.eventTypes.CHARACTER_SELECTED,
+            context.eventTypes.GROUP_SELECTED,
+            context.eventTypes.APP_READY,
+        ];
+        events.forEach((evt) => {
+            if (evt) context.eventSource.on(evt, () => setTimeout(injectQuickAccessButtons, 200));
+        });
+    }
 }
 
 function escapeHtml(text) {
