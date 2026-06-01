@@ -23,11 +23,14 @@ export function getPromptText(preset, customPrompt) {
 // instructions, and (most painfully) the review results the user just spent
 // tokens to generate. We keep that here so reopening restores it.
 // review is { issues, batchCount, skippedBatches } and is invalidated when a
-// different book is selected.
+// different book is selected. fixedIssues is a Set of issue objects the user
+// has resolved this session — tracked by object identity, which is stable
+// because the cached review's issue objects are never recreated.
 const sessionCache = {
     bookName: null,
     instructions: '',
     review: null,
+    fixedIssues: new Set(),
 };
 
 export async function openMainPopup(settings, context) {
@@ -144,6 +147,7 @@ export async function openMainPopup(settings, context) {
         // Remember the choice; the previous review belonged to a different book.
         sessionCache.bookName = bookName;
         sessionCache.review = null;
+        sessionCache.fixedIssues = new Set();
 
         try {
             issueListEl.innerHTML = '';
@@ -179,18 +183,30 @@ export async function openMainPopup(settings, context) {
             return;
         }
 
-        showStatus(reviewStatus, `Found ${issues.length} issue(s) across ${batchCount} batch(es). Click an entry to fix it.${skipNote}`, 'success');
+        const fixedCount = issues.filter((it) => sessionCache.fixedIssues.has(it)).length;
+        const fixedNote = fixedCount > 0 ? ` ${fixedCount} fixed so far.` : '';
+        showStatus(reviewStatus, `Found ${issues.length} issue(s) across ${batchCount} batch(es). Click an entry to fix it.${fixedNote}${skipNote}`, 'success');
+
+        // Called when an issue's fix succeeds (editor saved / resolution applied).
+        // Mark it fixed, refresh the list so the badge shows, and refresh entries.
+        const markFixed = (issue) => {
+            sessionCache.fixedIssues.add(issue);
+            showReview(reviewData);
+            loadAndRender(currentBookName);
+        };
+
         renderIssueList(
             issueListEl,
             issues,
             currentEntries,
+            sessionCache.fixedIssues,
             (entry, issue) => {
-                // Single-entry issue → open the editor on top; refresh on close.
-                openRewritePopup(entry, currentBookName, settings, context, issue, () => loadAndRender(currentBookName));
+                // Single-entry issue → open the editor on top; on success mark fixed.
+                openRewritePopup(entry, currentBookName, settings, context, issue, null, () => markFixed(issue));
             },
             (issue, affectedEntries) => {
                 // Multi-entry issue → open the cross-entry resolve flow.
-                openResolvePopup(issue, affectedEntries, currentBookName, settings, context, () => loadAndRender(currentBookName));
+                openResolvePopup(issue, affectedEntries, currentBookName, settings, context, () => markFixed(issue));
             },
         );
     }
@@ -218,6 +234,7 @@ export async function openMainPopup(settings, context) {
 
             // Cache the (token-costly) results so Close/reopen doesn't lose them.
             sessionCache.review = reviewData;
+            sessionCache.fixedIssues = new Set();
             showReview(reviewData);
         } catch (e) {
             console.error('[LorebookManipulator] Review failed:', e);
@@ -298,21 +315,24 @@ function renderEntryList(container, entries, onEntryClick, onDeleteClick) {
 // - Single-entry issue: a clickable chip opens the editor (onFixClick).
 // - Multi-entry issue: one "Resolve N entries together" button (onResolveClick)
 //   because the fix is a single cross-entry resolution (e.g. merge + delete).
+// - Issues in `fixedIssues` get a FIXED badge and are dimmed.
 // Entries the review couldn't map back to a real uid are shown but disabled.
-function renderIssueList(container, issues, entries, onFixClick, onResolveClick) {
+function renderIssueList(container, issues, entries, fixedIssues, onFixClick, onResolveClick) {
     container.innerHTML = '';
 
     const byUid = new Map(entries.map((e) => [e.uid, e]));
 
     for (const issue of issues) {
+        const isFixed = fixedIssues && fixedIssues.has(issue);
         const card = document.createElement('div');
-        card.className = `lm-issue-card lm-issue-${issue.severity}`;
+        card.className = `lm-issue-card lm-issue-${issue.severity}${isFixed ? ' lm-issue-fixed' : ''}`;
 
         const header = document.createElement('div');
         header.className = 'lm-issue-header';
         header.innerHTML = `
             <span class="lm-issue-type">${escapeHtml(issue.type)}</span>
             <span class="lm-issue-severity">${escapeHtml(issue.severity)}</span>
+            ${isFixed ? '<span class="lm-issue-fixed-badge"><i class="fa-solid fa-circle-check"></i> FIXED!</span>' : ''}
         `;
         card.appendChild(header);
 
@@ -370,7 +390,7 @@ function renderIssueList(container, issues, entries, onFixClick, onResolveClick)
     }
 }
 
-export async function openRewritePopup(entry, bookName, settings, context, issue = null, onClose = null) {
+export async function openRewritePopup(entry, bookName, settings, context, issue = null, onClose = null, onSuccess = null) {
     const { Popup, POPUP_TYPE } = context;
 
     // Base instruction comes from the preset/custom prompt. When the user
@@ -383,14 +403,16 @@ export async function openRewritePopup(entry, bookName, settings, context, issue
 
     const popupHtml = buildPopupHtml(entry, issue);
 
+    // cancelButton: false removes ST's built-in Cancel so the popup has exactly
+    // one clearly-labelled dismiss (our "Back" button), avoiding two Cancels.
     const popup = new Popup(popupHtml, POPUP_TYPE.TEXT, '', {
         wide: true,
         okButton: false,
-        cancelButton: 'Cancel',
+        cancelButton: false,
         allowVerticalScrolling: true,
     });
 
-    // show() resolves when the popup is dismissed (Save, Cancel, or Esc).
+    // show() resolves when the popup is dismissed (Save, Back, or Esc).
     // Run onClose afterwards so the caller can refresh its view. We don't
     // await here because the handler setup below must run synchronously
     // while the popup's DOM is present.
@@ -476,6 +498,9 @@ export async function openRewritePopup(entry, bookName, settings, context, issue
             showStatus(statusEl, 'Changes saved successfully!', 'success');
             toastr.success('Entry updated successfully.');
 
+            // Mark the originating issue (if any) as fixed before dismissing.
+            if (typeof onSuccess === 'function') onSuccess();
+
             setTimeout(() => popup.completeCancelled(), 1000);
         } catch (e) {
             console.error('[LorebookManipulator] Save failed:', e);
@@ -494,7 +519,7 @@ export async function openRewritePopup(entry, bookName, settings, context, issue
 // generated ON DEMAND (after review), shown as one action per entry
 // (keep/rewrite/delete) with diffs and delete warnings, each toggleable.
 // Applying backs up once, then applies only the checked actions.
-export async function openResolvePopup(issue, affectedEntries, bookName, settings, context, onClose = null) {
+export async function openResolvePopup(issue, affectedEntries, bookName, settings, context, onSuccess = null) {
     const { Popup, POPUP_TYPE } = context;
 
     const affectedList = affectedEntries
@@ -520,22 +545,22 @@ export async function openResolvePopup(issue, affectedEntries, bookName, setting
                 <i class="fa-solid fa-check"></i> Apply Selected
             </button>
             <button type="button" id="lm_resolve_cancel" class="menu_button menu_button_icon">
-                <i class="fa-solid fa-xmark"></i> Cancel
+                <i class="fa-solid fa-arrow-left"></i> Back to issues
             </button>
         </div>
     </div>`;
 
+    // okButton/cancelButton false → only our own buttons, so there's exactly
+    // one clearly-labelled "Back to issues" dismiss (no duplicate Cancel).
     const popup = new Popup(popupHtml, POPUP_TYPE.TEXT, '', {
         wide: true,
         large: true,
         okButton: false,
-        cancelButton: 'Cancel',
+        cancelButton: false,
         allowVerticalScrolling: true,
     });
 
-    popup.show().then(() => {
-        if (typeof onClose === 'function') onClose();
-    });
+    popup.show();
 
     const container = document.querySelector('.lm-resolve-popup');
     if (!container) return;
@@ -588,7 +613,7 @@ export async function openResolvePopup(issue, affectedEntries, bookName, setting
         });
 
         if (toApply.length === 0) {
-            showStatus(statusEl, 'Nothing selected to apply. Tick at least one change, or Cancel.', 'error');
+            showStatus(statusEl, 'Nothing selected to apply. Tick at least one change, or go back.', 'error');
             return;
         }
 
@@ -615,6 +640,9 @@ export async function openResolvePopup(issue, affectedEntries, bookName, setting
 
             showStatus(statusEl, `Applied ${rewrites.length} rewrite(s) and ${deletes.length} deletion(s). Backup saved.`, 'success');
             toastr.success('Issue resolved. Restore from Backup History if needed.');
+
+            // Mark the issue fixed before dismissing back to the issue list.
+            if (typeof onSuccess === 'function') onSuccess();
 
             setTimeout(() => popup.completeCancelled(), 1200);
         } catch (e) {
@@ -696,6 +724,12 @@ function buildPopupHtml(entry, issue = null) {
            </div>`
         : '';
 
+    // When opened from a review issue, dismissing returns to the issue list,
+    // so label it "Back to issues". Otherwise it just closes the editor.
+    const dismissLabel = issue
+        ? '<i class="fa-solid fa-arrow-left"></i> Back to issues'
+        : '<i class="fa-solid fa-xmark"></i> Cancel';
+
     return `<div class="lm-rewrite-popup">
         <h3 class="lm-popup-title">Edit Entry #${escapeHtml(String(entry.uid))}</h3>
 
@@ -728,7 +762,7 @@ function buildPopupHtml(entry, issue = null) {
                 <i class="fa-solid fa-check"></i> Save
             </button>
             <button type="button" id="lm_reject_btn" class="menu_button menu_button_icon">
-                <i class="fa-solid fa-xmark"></i> Cancel
+                ${dismissLabel}
             </button>
         </div>
     </div>`;

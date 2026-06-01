@@ -67,6 +67,7 @@ Click the book icon (open-book) added to the character sheet, group panel, and r
 3. A list of issues appears, color-coded by severity (duplicate, overlap, verbose, contradiction, other). The review only *finds* problems — fixes are generated later, on demand.
 4. **For an issue affecting one entry**: click it to open the editor, pre-filled with the issue, and fix it through the normal diff/save flow.
 5. **For an issue affecting two or more entries** (e.g. a duplicate): click **Resolve N entries together**. In the popup, click **Generate Fix Plan** — the AI proposes one action per entry (keep / rewrite / delete), e.g. merge the duplicates into one entry and delete the rest. Each action has a checkbox; untick anything you don't want, then **Apply Selected** (a backup is saved first).
+6. After you save/apply, the issue is badged **FIXED!** and dimmed so you can track your progress. Use **← Back to issues** to return to the list without losing your review (your results are kept for the session, even if you Close and reopen).
 
 Use **Backup History** in the extension settings drawer to restore any previous state.
 

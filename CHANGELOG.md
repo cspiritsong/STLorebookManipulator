@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-01
+
+### Added
+- **"FIXED!" indicator**: after you save a single-entry fix or apply a multi-entry resolution, that issue is badged **FIXED!** and dimmed in the list, so you can see your progress through the issues. The status line also shows "N fixed so far." Fixed-tracking resets when you run a new review or switch lorebooks.
+
+### Changed
+- **Clearer navigation out of the editor/resolve popups.** When you open an entry editor or the resolve view from a review issue, the dismiss button now reads **"← Back to issues"** (instead of "Cancel") and returns you to the issue list — your review results are still there. Removed SillyTavern's duplicate built-in Cancel button so each popup has exactly one, clearly-labelled dismiss control.
+- An issue is only marked FIXED on a successful save/apply — backing out without saving leaves it unfixed.
+- Bumped version to 0.7.0.
+
 ## [0.6.3] - 2026-06-01
 
 ### Fixed

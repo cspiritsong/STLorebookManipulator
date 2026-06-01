@@ -341,6 +341,25 @@
     background: var(--SmartThemeBlurTintColor, #2a2a2a);
 }
 
+/* A resolved issue: dimmed, green edge, with a FIXED badge in the header. */
+.lm-issue-card.lm-issue-fixed {
+    opacity: 0.6;
+    border-left-color: #6bff6b !important;
+}
+
+.lm-issue-fixed-badge {
+    margin-left: auto;
+    font-size: 0.72em;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #6bff6b;
+    background: rgba(0, 200, 0, 0.18);
+    border: 1px solid #6bff6b;
+    border-radius: 3px;
+    padding: 1px 6px;
+}
+
 /* Severity color coding (left border) */
 .lm-issue-low {
     border-left-color: #6495ed;
