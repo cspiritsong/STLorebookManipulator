@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-06-01
+
+### Fixed
+- **The popup closed instantly when clicking Generate / Review / any action button** (the "ragequit" you saw). SillyTavern renders popups inside a native `<dialog>`, and a `<button>` with no explicit `type` defaults to `type="submit"` — clicking a submit button inside a dialog closes it. Every button the extension creates is now `type="button"`. This affected Generate Suggestion, Save, Review & Recommend Fixes, the resolve-plan buttons, the delete trash icon, and issue chips.
+- Added `tests/button-type.test.js`, which statically scans `ui.js` and fails if any button is missing `type="button"` — so this can't silently come back.
+
 ## [0.6.1] - 2026-06-01
 
 ### Fixed

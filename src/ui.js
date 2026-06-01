@@ -49,7 +49,7 @@ export async function openMainPopup(settings, context) {
             <label for="lm_review_instructions">Review the whole book</label>
             <textarea id="lm_review_instructions" class="text_pole textarea_compact" rows="2"
                 placeholder="Optional: tell the AI what to focus on (e.g. 'find duplicate lore' or 'flag contradictions'). Leave blank for a general review."></textarea>
-            <button id="lm_review_btn" class="menu_button menu_button_icon">
+            <button type="button" id="lm_review_btn" class="menu_button menu_button_icon">
                 <i class="fa-solid fa-magnifying-glass"></i> Review &amp; Recommend Fixes
             </button>
             <div id="lm_review_status" class="lm-status"></div>
@@ -279,6 +279,7 @@ function renderEntryList(container, entries, onEntryClick, onDeleteClick) {
 
         if (typeof onDeleteClick === 'function') {
             const del = document.createElement('button');
+            del.type = 'button';
             del.className = 'menu_button lm-entry-delete';
             del.title = 'Delete this entry';
             del.innerHTML = '<i class="fa-solid fa-trash"></i>';
@@ -333,6 +334,7 @@ function renderIssueList(container, issues, entries, onFixClick, onResolveClick)
             card.appendChild(names);
 
             const resolveBtn = document.createElement('button');
+            resolveBtn.type = 'button';
             resolveBtn.className = 'menu_button menu_button_icon lm-issue-resolve';
             resolveBtn.innerHTML = `<i class="fa-solid fa-object-group"></i> Resolve ${resolvable.length} entries together`;
             resolveBtn.addEventListener('click', () => onResolveClick(issue, resolvable));
@@ -345,6 +347,7 @@ function renderIssueList(container, issues, entries, onFixClick, onResolveClick)
             for (const ref of issue.entries) {
                 const entry = byUid.get(ref.uid);
                 const chip = document.createElement('button');
+                chip.type = 'button';
                 chip.className = 'menu_button lm-issue-chip';
 
                 if (entry) {
@@ -510,13 +513,13 @@ export async function openResolvePopup(issue, affectedEntries, bookName, setting
         <div id="lm_resolve_plan" class="lm-resolve-plan"></div>
 
         <div class="lm-popup-actions">
-            <button id="lm_resolve_generate" class="menu_button menu_button_icon">
+            <button type="button" id="lm_resolve_generate" class="menu_button menu_button_icon">
                 <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Fix Plan
             </button>
-            <button id="lm_resolve_apply" class="menu_button menu_button_icon" disabled>
+            <button type="button" id="lm_resolve_apply" class="menu_button menu_button_icon" disabled>
                 <i class="fa-solid fa-check"></i> Apply Selected
             </button>
-            <button id="lm_resolve_cancel" class="menu_button menu_button_icon">
+            <button type="button" id="lm_resolve_cancel" class="menu_button menu_button_icon">
                 <i class="fa-solid fa-xmark"></i> Cancel
             </button>
         </div>
@@ -718,13 +721,13 @@ function buildPopupHtml(entry, issue = null) {
         <div id="lm_status" class="lm-status"></div>
 
         <div class="lm-popup-actions">
-            <button id="lm_generate_btn" class="menu_button menu_button_icon">
+            <button type="button" id="lm_generate_btn" class="menu_button menu_button_icon">
                 <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Suggestion
             </button>
-            <button id="lm_approve_btn" class="menu_button menu_button_icon">
+            <button type="button" id="lm_approve_btn" class="menu_button menu_button_icon">
                 <i class="fa-solid fa-check"></i> Save
             </button>
-            <button id="lm_reject_btn" class="menu_button menu_button_icon">
+            <button type="button" id="lm_reject_btn" class="menu_button menu_button_icon">
                 <i class="fa-solid fa-xmark"></i> Cancel
             </button>
         </div>

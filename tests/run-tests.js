@@ -7,6 +7,7 @@ const __dirname = dirname(__filename);
 
 const tests = [
     'syntax.test.js',
+    'button-type.test.js',
     'utils.test.js',
     'errors.test.js',
     'llm.test.js',
