@@ -62,7 +62,7 @@ export async function openMainPopup(settings, context) {
     const popup = new Popup(popupHtml, POPUP_TYPE.TEXT, '', {
         wide: true,
         large: true,
-        okButton: null,
+        okButton: false,
         cancelButton: 'Close',
         allowVerticalScrolling: true,
     });
@@ -385,7 +385,7 @@ export async function openRewritePopup(entry, bookName, settings, context, issue
 
     const popup = new Popup(popupHtml, POPUP_TYPE.TEXT, '', {
         wide: true,
-        okButton: null,
+        okButton: false,
         cancelButton: 'Cancel',
         allowVerticalScrolling: true,
     });
@@ -528,7 +528,7 @@ export async function openResolvePopup(issue, affectedEntries, bookName, setting
     const popup = new Popup(popupHtml, POPUP_TYPE.TEXT, '', {
         wide: true,
         large: true,
-        okButton: null,
+        okButton: false,
         cancelButton: 'Cancel',
         allowVerticalScrolling: true,
     });

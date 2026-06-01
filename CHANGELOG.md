@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-06-01
+
+### Fixed
+- **The real ragequit fix.** The popup closed whenever you clicked the OK/"go" button because SillyTavern's `POPUP_TYPE.TEXT` shows its own built-in **OK button** unless you pass `okButton: false` — and we were passing `okButton: null`, which leaves it visible. That default OK button closes the popup by design. All three popups now pass `okButton: false`, so only our own action buttons (and Cancel) remain.
+- Added an `okButton: null` guard to `tests/button-type.test.js` so this can't return.
+
+### Note
+- The v0.6.2 `type="button"` change was not the actual cause (ST's dialog has no `<form>`, so submit buttons never closed it). It's harmless and correct practice, but this release (`okButton: false`) is the one that fixes the close-on-click behavior.
+
 ## [0.6.2] - 2026-06-01
 
 ### Fixed

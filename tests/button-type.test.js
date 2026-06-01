@@ -50,5 +50,15 @@ assert(
         : `Found ${created} createElement('button') call(s) but only ${typedAssignments} .type='button' assignment(s)`,
 );
 
+// 3. No popup may pass `okButton: null`. For POPUP_TYPE.TEXT, SillyTavern
+// shows its built-in OK button unless okButton === false; `null` leaves it
+// visible, and clicking that default OK button closes the popup (the real
+// "ragequit on the OK/go button" bug, v0.6.x). All our popups use our own
+// action buttons, so the default OK must be explicitly hidden with `false`.
+const okNull = (src.match(/okButton:\s*null/g) || []).length;
+assert(okNull === 0, okNull === 0
+    ? 'No popup uses okButton: null (default OK button is hidden with false)'
+    : `Found ${okNull} popup(s) with okButton: null — use okButton: false to hide ST's default OK button`);
+
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
 process.exit(failed > 0 ? 1 : 0);
