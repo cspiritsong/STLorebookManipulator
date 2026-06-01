@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-01
+
+### Added
+- **Newbie-friendly errors**: when something fails (review, generate, save, delete, load), the extension now shows a plain-language block — what went wrong and how to fix it — instead of a raw technical message. Covers bad AI format, no connection, missing/disabled Connection Manager, rate limits/quota, API-key problems, context-length, network/timeout, empty lorebook, and full backup storage. Unknown errors fall back to generic guidance and keep the raw detail for debugging.
+- New `src/errors.js` (`explainError`, `renderFriendlyError`) and `tests/errors.test.js` (21 tests).
+- The entry editor now shows the **current content in an editable textarea** (previously content was only visible as a diff after clicking Generate). You can edit content by hand and Save without using the AI at all.
+
+### Changed
+- **Generate Suggestion** now diffs against the current content box (including your hand edits) and drops the suggestion into the box so you can tweak it before saving.
+- **Save** always writes the content from the box, so manual content edits persist.
+- Bumped version to 0.5.0.
+
 ## [0.4.2] - 2026-05-31
 
 ### Fixed

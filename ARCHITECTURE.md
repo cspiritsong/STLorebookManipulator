@@ -17,7 +17,8 @@ STLorebookManipulator/
 │   ├── lorebook.js        # Load/save/reload lorebook data via ST World Info API
 │   ├── llm.js             # LLM calls via generateRaw(): single-entry rewrite + whole-book review (batching, JSON schema parsing)
 │   ├── diff.js            # Word-level diff computation, inline/side-by-side HTML rendering
-│   ├── ui.js              # Popup creation, review/issue list, approve/reject handlers
+│   ├── ui.js              # Popup creation, entry editor, review/issue list, handlers
+│   ├── errors.js          # Maps raw errors to newbie-friendly title/what/fix guidance
 │   └── utils.js           # Shared HTML escaping helpers (escapeHtml, escapeAttr)
 ├── prompts/
 │   └── rewrite.hbs        # Handlebars template for rewrite system/user prompts
@@ -27,7 +28,9 @@ STLorebookManipulator/
 │   ├── llm.test.js        # Unit tests for rewrite parsing + response normalization
 │   ├── review.test.js     # Unit tests for review batching + issue parsing
 │   ├── lorebook.test.js   # Unit tests for field editing, deletion, sanitization
+│   ├── errors.test.js     # Unit tests for friendly error mapping
 │   ├── utils.test.js      # Unit tests for HTML escaping helpers
+│   ├── syntax.test.js     # node --check on every shipped JS file
 │   └── run-tests.js       # Test runner
 ├── LICENSE
 ├── README.md
@@ -84,7 +87,7 @@ STLorebookManipulator/
 
 ### src/ui.js — Popup & Interaction
 - **openMainPopup(settings, context)**: Standalone popup opened by the quick-access button. Shows the lorebook selector, the whole-book review panel (instruction box + Review button + issue list), and the entry list. Caches loaded entries so review results (which reference entries by uid) can be mapped back to real entry objects. Holds `loadAndRender` (refreshes the list, e.g. after a delete) and `handleDeleteEntry` (confirm → backup → delete → refresh).
-- **openRewritePopup(entry, bookName, settings, context, issue=null)**: The entry editor popup. Editable inputs for title, primary keys, secondary keys; optional **Generate Suggestion** to rewrite content (shown as a diff). **Save** collects all field edits (plus regenerated content if any), backs up, then calls `updateEntryFields`. When `issue` is provided (from a review), shows an issue banner and appends the issue to the rewrite instruction.
+- **openRewritePopup(entry, bookName, settings, context, issue=null, onClose=null)**: The entry editor popup. Editable inputs for title, primary keys, secondary keys, and an always-visible **content textarea** (shows the current content). Optional **Generate Suggestion** rewrites the content: it diffs against the current box text, shows the highlighted diff, and drops the suggestion into the box for further tweaking. **Save** writes all four editable fields (content read straight from the box), backs up first, then calls `updateEntryFields`. Stacks on top of the main popup; `onClose` (run when the popup is dismissed) lets the caller refresh its list. When `issue` is provided (from a review), shows an issue banner and appends the issue to the rewrite instruction. Errors surface via `showFriendlyError`.
 - **renderEntryList(container, entries, onEntryClick, onDeleteClick)** (internal): Renders each entry with a clickable body (opens editor) and a trash button (delete). The trash click stops propagation so it doesn't also open the editor.
 - **renderIssueList(container, issues, entries, onFixClick)** (internal): Renders review issues as severity-colored cards with a clickable chip per affected entry. Chips for unresolvable uids are disabled.
 - Save triggers: backup → updateEntryFields → close popup. Delete triggers: confirm → backup → deleteEntry → refresh list. Cancel simply closes.
@@ -93,6 +96,11 @@ STLorebookManipulator/
 - **escapeHtml(text)**: Escapes `& < > " '` for safe insertion into HTML content. Pure string implementation (no DOM dependency) so it works in both browser and Node test environments.
 - **escapeAttr(text)**: Escapes quotes for safe insertion into HTML attribute values.
 - Centralizing these prevents the class of bug where a helper is used in one module but only defined in another.
+
+### src/errors.js — Friendly Error Guidance
+- **explainError(error)**: Pure function. Pattern-matches an error message (case-insensitive substrings) against an ordered rule list and returns `{ title, what, fix }` — a short label, a plain explanation, and a concrete fix step. Unknown errors get generic guidance plus the original `raw` message. First matching rule wins, so specific patterns are listed before general ones.
+- **renderFriendlyError(error, escapeHtml)**: Renders the explanation as an HTML block. `escapeHtml` is injected so the module stays DOM-free and testable.
+- Used by `ui.js` (`showFriendlyError`) wherever an operation can fail: review, generate, save, delete, and lorebook load.
 
 ### prompts/rewrite.hbs — Prompt Templates
 - Handlebars template with variables: `{{entryContent}}`, `{{customInstructions}}`

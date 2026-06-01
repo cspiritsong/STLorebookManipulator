@@ -3,6 +3,7 @@ import { computeDiff, renderInlineDiff, renderSideBySideDiff } from './diff.js';
 import { createBackup } from './backup.js';
 import { updateEntryFields, deleteEntry, getLorebookNames, loadLorebook, parseKeywordString } from './lorebook.js';
 import { escapeHtml, escapeAttr } from './utils.js';
+import { renderFriendlyError } from './errors.js';
 
 const PROMPT_PRESETS = {
     prune: 'Shorten this entry for brevity while preserving all factual content. Remove redundancy and unnecessary elaboration.',
@@ -120,7 +121,7 @@ export async function openMainPopup(settings, context) {
             await loadAndRender(bookName);
         } catch (e) {
             console.error('[LorebookManipulator] Delete failed:', e);
-            toastr.error(`Failed to delete entry: ${e.message}`);
+            entryListEl.innerHTML = renderFriendlyError(e, escapeHtml);
         }
     }
 
@@ -137,7 +138,8 @@ export async function openMainPopup(settings, context) {
             await loadAndRender(bookName);
         } catch (e) {
             console.error('[LorebookManipulator] Failed to load entries:', e);
-            entryListEl.innerHTML = `<p class="lm-no-backups">Error: ${escapeHtml(e.message)}</p>`;
+            entryListEl.style.display = 'block';
+            entryListEl.innerHTML = renderFriendlyError(e, escapeHtml);
         }
     });
 
@@ -169,12 +171,13 @@ export async function openMainPopup(settings, context) {
 
             showStatus(reviewStatus, `Found ${issues.length} issue(s) across ${batchCount} batch(es). Click an entry to fix it.`, 'success');
             renderIssueList(issueListEl, issues, currentEntries, (entry, issue) => {
-                // Stack the rewrite popup on top so the issue list survives.
-                openRewritePopup(entry, currentBookName, settings, context, issue);
+                // Stack the editor on top so the issue list survives, and
+                // refresh the entry list when it closes.
+                openRewritePopup(entry, currentBookName, settings, context, issue, () => loadAndRender(currentBookName));
             });
         } catch (e) {
             console.error('[LorebookManipulator] Review failed:', e);
-            showStatus(reviewStatus, e.message, 'error');
+            showFriendlyError(reviewStatus, e);
         } finally {
             reviewBtn.disabled = false;
         }
@@ -316,40 +319,44 @@ export async function openRewritePopup(entry, bookName, settings, context, issue
     const titleInput = container.querySelector('#lm_field_title');
     const keysInput = container.querySelector('#lm_field_keys');
     const secondaryInput = container.querySelector('#lm_field_secondary');
-
-    // null until the user generates a rewrite; when set, content is saved too.
-    let currentSuggestion = null;
+    const contentInput = container.querySelector('#lm_field_content');
 
     generateBtn?.addEventListener('click', async () => {
         try {
             showStatus(statusEl, 'Generating suggestion...', 'loading');
             generateBtn.disabled = true;
 
+            // Diff against whatever is currently in the box (the user may have
+            // edited it by hand), and rewrite from that current text.
+            const before = contentInput ? contentInput.value : entry.content;
+
             const result = await generateRewrite(
-                entry.content,
+                before,
                 promptText,
                 settings.maxTokens,
                 context,
                 settings.connectionProfileId || null,
             );
 
-            currentSuggestion = result.rewrittenContent;
-
-            const diffResult = computeDiff(entry.content, result.rewrittenContent);
+            const diffResult = computeDiff(before, result.rewrittenContent);
 
             const diffHtml = settings.diffStyle === 'side-by-side'
                 ? renderSideBySideDiff(diffResult)
                 : renderInlineDiff(diffResult);
 
             diffContainer.innerHTML = diffHtml;
+            diffContainer.style.display = 'block';
             justificationContainer.innerHTML = `<p class="lm-justification"><strong>Justification:</strong> ${escapeHtml(result.justification)}</p>`;
             justificationContainer.style.display = 'block';
 
-            showStatus(statusEl, 'Suggestion ready. Review the diff, then Save.', 'success');
+            // Drop the suggestion into the editable box so the user can tweak
+            // it further before saving. The diff above shows what changed.
+            if (contentInput) contentInput.value = result.rewrittenContent;
+
+            showStatus(statusEl, 'Suggestion applied to the content box. Review the diff, edit if needed, then Save.', 'success');
         } catch (e) {
             console.error('[LorebookManipulator] Generate failed:', e);
-            showStatus(statusEl, e.message, 'error');
-            currentSuggestion = null;
+            showFriendlyError(statusEl, e);
         } finally {
             generateBtn.disabled = false;
         }
@@ -357,15 +364,14 @@ export async function openRewritePopup(entry, bookName, settings, context, issue
 
     approveBtn?.addEventListener('click', async () => {
         try {
-            // Collect field edits. Content is only included if regenerated.
+            // Save all editable fields, reading content straight from the box
+            // (covers both hand edits and AI suggestions).
             const fields = {
                 comment: titleInput ? titleInput.value : entry.comment,
                 key: parseKeywordString(keysInput ? keysInput.value : ''),
                 keysecondary: parseKeywordString(secondaryInput ? secondaryInput.value : ''),
+                content: contentInput ? contentInput.value : entry.content,
             };
-            if (currentSuggestion !== null) {
-                fields.content = currentSuggestion;
-            }
 
             showStatus(statusEl, 'Saving changes...', 'loading');
             approveBtn.disabled = true;
@@ -382,8 +388,7 @@ export async function openRewritePopup(entry, bookName, settings, context, issue
             setTimeout(() => popup.completeCancelled(), 1000);
         } catch (e) {
             console.error('[LorebookManipulator] Save failed:', e);
-            showStatus(statusEl, `Failed to save: ${e.message}`, 'error');
-            toastr.error(`Failed to save changes: ${e.message}`);
+            showFriendlyError(statusEl, e);
             approveBtn.disabled = false;
             rejectBtn.disabled = false;
         }
@@ -420,10 +425,11 @@ function buildPopupHtml(entry, issue = null) {
         <label for="lm_field_secondary">Secondary Keys (comma-separated)</label>
         <input id="lm_field_secondary" type="text" class="text_pole" value="${escapeAttr(secondaryValue)}" placeholder="(optional)" />
 
-        <label>Content</label>
-        <div id="lm_diff_container" class="lm-diff-container">
-            <p class="lm-placeholder-text">Click "Generate Suggestion" to rewrite the content, or just edit the fields above and Save.</p>
-        </div>
+        <label for="lm_field_content">Content</label>
+        <textarea id="lm_field_content" class="text_pole textarea_compact lm-content-textarea" rows="8" placeholder="(empty)">${escapeHtml(entry.content || '')}</textarea>
+        <small class="lm-field-hint">Edit the content directly, or click "Generate Suggestion" to have the AI rewrite it (you'll see a highlighted diff, and the box above updates to the suggestion).</small>
+
+        <div id="lm_diff_container" class="lm-diff-container" style="display:none;"></div>
 
         <div id="lm_justification_container" style="display:none;"></div>
 
@@ -447,5 +453,13 @@ function showStatus(el, message, type) {
     if (!el) return;
     el.textContent = message;
     el.className = `lm-status lm-status-${type}`;
+    el.style.display = 'block';
+}
+
+// Render a newbie-friendly error (title + what + how-to-fix) into a status area.
+function showFriendlyError(el, error) {
+    if (!el) return;
+    el.className = 'lm-status lm-status-error';
+    el.innerHTML = renderFriendlyError(error, escapeHtml);
     el.style.display = 'block';
 }

@@ -9,12 +9,12 @@ A SillyTavern extension for safely rewriting and pruning lorebook entries using 
 
 - Browse entries in any of your SillyTavern lorebooks
 - **Review the whole book**: ask the LLM to scan all entries and recommend fixes (duplicates, overlap, verbosity, contradictions). Large books are auto-batched to fit the model's context window.
+- **Edit an entry's title, primary keys, secondary keys, and content** directly — by hand or with AI help
 - Send individual entries to the LLM with a rewrite/prune prompt
-- **Edit an entry's title, primary keys, and secondary keys** directly — not just content
 - **Delete entries** (with automatic backup first) to clear out duplicates and dead weight
 - **Choose any connection profile** for the work, independent of your active chat connection
 - Review suggested changes in a highlighted before/after diff (inline or side-by-side)
-- Approve or reject each suggestion individually
+- **Plain-language errors**: when something fails, you get a clear explanation of what went wrong and how to fix it — not a cryptic technical message
 - Auto-backup history before every change, with restore from any point
 
 ## Why It Exists
@@ -52,9 +52,9 @@ Click the book icon (open-book) added to the character sheet, group panel, and r
 
 **To edit a single entry:**
 1. Click an entry to open the editor popup
-2. Edit the **Title**, **Primary Keys**, or **Secondary Keys** fields directly (keys are comma-separated)
-3. Optionally click **Generate Suggestion** to rewrite the content (uses your configured rewrite preset or custom prompt), then review the highlighted diff
-4. Click **Save** to apply (auto-backs up first) or **Cancel** to discard
+2. Edit the **Title**, **Primary Keys**, **Secondary Keys**, or **Content** directly (keys are comma-separated; content is a normal text box)
+3. Optionally click **Generate Suggestion** to have the AI rewrite the content. You'll see a highlighted diff, and the suggestion drops into the content box so you can tweak it further
+4. Click **Save** to apply (auto-backs up first) or **Cancel** to return to the entry list
 
 **To delete an entry:**
 1. Click the trash icon on the right of any entry in the list
