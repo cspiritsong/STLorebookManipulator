@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-06-01
+
+### Fixed
+- A single unreadable batch no longer kills the whole review. Previously, if the AI's reply for one batch couldn't be parsed (e.g. "Review failed on batch 3 of 13"), the entire review was thrown away. Now each batch is retried once with a strict format reminder, and if it still can't be read it is **skipped** — you keep the issues from every readable batch. The review only fails outright if *every* batch is unreadable.
+- The UI now reports how many batches were skipped (e.g. "2 of 13 couldn't be read and were skipped"), with a hint to raise Max Response Tokens or use a more capable model.
+
+### Changed
+- `parseReviewResponse` is now more forgiving about the AI's output shape: it accepts the expected `{"issues": [...]}`, a bare top-level array, a differently-named array property (e.g. `results`), and treats an empty `{}` as "no issues found" rather than an error.
+- `extractJson` now handles a bare top-level JSON array in addition to an object.
+- `reviewEntries` returns a `skippedBatches` count alongside `issues` and `batchCount`.
+
 ## [0.5.0] - 2026-06-01
 
 ### Added

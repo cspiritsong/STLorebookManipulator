@@ -229,6 +229,7 @@ export async function reviewEntries(entries, instructions, maxTokens, context, o
 
     const batches = batchEntries(entries, maxBatchChars);
     const allIssues = [];
+    let skippedBatches = 0; // batches whose reply couldn't be read, even after a retry
 
     const systemPrompt = `You are a lorebook auditor. You review SillyTavern lorebook entries and identify issues that could be improved.
 
@@ -244,6 +245,9 @@ RULES:
 - Be specific in the description and suggest how to fix it.
 - If there are no issues, return an empty "issues" array.
 - Return ONLY valid JSON matching the required schema. No markdown, no commentary outside the JSON.`;
+
+    // The exact shape we want back, repeated when the first reply is unreadable.
+    const formatReminder = 'Your previous reply could not be read. Respond with ONLY a JSON object of this exact shape, nothing else: {"issues": [{"type": "duplicate|overlap|verbose|contradiction|other", "severity": "low|medium|high", "description": "...", "entries": [{"uid": <number>, "name": "..."}]}]}. If there are no issues, reply exactly {"issues": []}.';
 
     for (let i = 0; i < batches.length; i++) {
         if (onProgress) onProgress(i + 1, batches.length);
@@ -262,24 +266,40 @@ ${entriesText}
 
 Report issues as JSON with an "issues" array. Reference each affected entry by its exact uid and name.`;
 
-        try {
-            const result = await callLLM({
-                systemPrompt,
-                prompt: userPrompt,
-                responseLength: maxTokens || 2048,
-                jsonSchema: REVIEW_SCHEMA,
-                profileId,
-            }, context);
+        // Attempt the batch; on a parse/read failure, retry once with a stricter
+        // format reminder. If it still fails, skip this batch rather than losing
+        // the whole review.
+        let parsed = null;
+        for (let attempt = 0; attempt < 2 && parsed === null; attempt++) {
+            try {
+                const prompt = attempt === 0 ? userPrompt : `${userPrompt}\n\n${formatReminder}`;
+                const result = await callLLM({
+                    systemPrompt,
+                    prompt,
+                    responseLength: maxTokens || 2048,
+                    jsonSchema: REVIEW_SCHEMA,
+                    profileId,
+                }, context);
 
-            const parsed = parseReviewResponse(result);
+                parsed = parseReviewResponse(result);
+            } catch (e) {
+                console.error(`[LorebookManipulator] Review batch ${i + 1}/${batches.length} attempt ${attempt + 1} failed:`, e);
+            }
+        }
+
+        if (parsed === null) {
+            skippedBatches++;
+        } else {
             allIssues.push(...parsed.issues);
-        } catch (e) {
-            console.error(`[LorebookManipulator] Review batch ${i + 1}/${batches.length} failed:`, e);
-            throw new Error(`Review failed on batch ${i + 1} of ${batches.length}: ${e.message}`);
         }
     }
 
-    return { issues: allIssues, batchCount: batches.length };
+    // Only treat the whole review as failed if EVERY batch was unreadable.
+    if (skippedBatches === batches.length) {
+        throw new Error('Could not parse LLM response as JSON. The model may not support structured output. Try a more capable model or raise Max Response Tokens.');
+    }
+
+    return { issues: allIssues, batchCount: batches.length, skippedBatches };
 }
 
 // ── Response parsing ─────────────────────────────────────────────────────
@@ -299,10 +319,23 @@ function extractJson(rawText) {
         cleaned = codeBlockMatch[1].trim();
     }
 
-    const jsonStart = cleaned.indexOf('{');
-    const jsonEnd = cleaned.lastIndexOf('}');
-    if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
-        cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+    // Trim to the outermost JSON value. The model may wrap the JSON in prose.
+    // Handle both an object ({...}) and a bare array ([...]) — whichever the
+    // model returned. We pick the bracket type that appears first.
+    const objStart = cleaned.indexOf('{');
+    const arrStart = cleaned.indexOf('[');
+    const useArray = arrStart !== -1 && (objStart === -1 || arrStart < objStart);
+
+    if (useArray) {
+        const arrEnd = cleaned.lastIndexOf(']');
+        if (arrStart !== -1 && arrEnd !== -1 && arrEnd > arrStart) {
+            cleaned = cleaned.substring(arrStart, arrEnd + 1);
+        }
+    } else {
+        const objEnd = cleaned.lastIndexOf('}');
+        if (objStart !== -1 && objEnd !== -1 && objEnd > objStart) {
+            cleaned = cleaned.substring(objStart, objEnd + 1);
+        }
     }
 
     try {
@@ -334,19 +367,42 @@ export function parseLLMResponse(rawText) {
 }
 
 // Parse and sanitize a whole-book review response into a clean issue list.
-// Defensive: drops malformed issues and coerces fields to safe defaults so a
-// slightly-off model response still yields a usable result.
+// Forgiving by design — models phrase structured output inconsistently:
+//   - { "issues": [...] }            (the schema we ask for)
+//   - [ ... ]                        (a bare array)
+//   - { "results": [...] } etc.      (a differently-named array property)
+//   - { }                            (an object with no array -> treat as "no issues")
+// Malformed individual issues are dropped and fields coerced to safe defaults.
 export function parseReviewResponse(rawText) {
     const parsed = extractJson(rawText);
 
-    if (!parsed || !Array.isArray(parsed.issues)) {
+    // Find the array of issues from whatever shape we got.
+    let rawIssues;
+    if (Array.isArray(parsed)) {
+        rawIssues = parsed;
+    } else if (parsed && typeof parsed === 'object') {
+        if (Array.isArray(parsed.issues)) {
+            rawIssues = parsed.issues;
+        } else {
+            // Accept the first array-valued property (e.g. "results", "items").
+            const arrayProp = Object.values(parsed).find((v) => Array.isArray(v));
+            if (arrayProp) {
+                rawIssues = arrayProp;
+            } else if (Object.keys(parsed).length === 0) {
+                // A bare {} is a valid "I found nothing" answer.
+                rawIssues = [];
+            } else {
+                throw new Error('Review response missing "issues" array.');
+            }
+        }
+    } else {
         throw new Error('Review response missing "issues" array.');
     }
 
     const validSeverities = ['low', 'medium', 'high'];
     const validTypes = ['duplicate', 'overlap', 'verbose', 'contradiction', 'other'];
 
-    const issues = parsed.issues
+    const issues = rawIssues
         .filter((it) => it && typeof it === 'object')
         .map((it) => ({
             type: validTypes.includes(it.type) ? it.type : 'other',

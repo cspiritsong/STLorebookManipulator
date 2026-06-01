@@ -151,7 +151,7 @@ export async function openMainPopup(settings, context) {
             issueListEl.innerHTML = '';
             showStatus(reviewStatus, 'Reviewing entries...', 'loading');
 
-            const { issues, batchCount } = await reviewEntries(
+            const { issues, batchCount, skippedBatches } = await reviewEntries(
                 currentEntries,
                 reviewInstructions.value,
                 settings.maxTokens,
@@ -164,12 +164,18 @@ export async function openMainPopup(settings, context) {
                 },
             );
 
+            // If some batches couldn't be read, tell the user — but we still
+            // show whatever the readable batches found.
+            const skipNote = skippedBatches > 0
+                ? ` (${skippedBatches} of ${batchCount} batch(es) couldn't be read and were skipped — try raising Max Response Tokens or a more capable model for a complete review.)`
+                : '';
+
             if (issues.length === 0) {
-                showStatus(reviewStatus, `No issues found across ${batchCount} batch(es). Your lorebook looks clean.`, 'success');
+                showStatus(reviewStatus, `No issues found across ${batchCount} batch(es). Your lorebook looks clean.${skipNote}`, skippedBatches > 0 ? 'error' : 'success');
                 return;
             }
 
-            showStatus(reviewStatus, `Found ${issues.length} issue(s) across ${batchCount} batch(es). Click an entry to fix it.`, 'success');
+            showStatus(reviewStatus, `Found ${issues.length} issue(s) across ${batchCount} batch(es). Click an entry to fix it.${skipNote}`, 'success');
             renderIssueList(issueListEl, issues, currentEntries, (entry, issue) => {
                 // Stack the editor on top so the issue list survives, and
                 // refresh the entry list when it closes.

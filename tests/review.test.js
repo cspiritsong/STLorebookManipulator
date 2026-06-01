@@ -1,4 +1,4 @@
-import { batchEntries, parseReviewResponse } from '../src/llm.js';
+import { batchEntries, parseReviewResponse, reviewEntries } from '../src/llm.js';
 
 let passed = 0;
 let failed = 0;
@@ -18,6 +18,17 @@ function assertThrows(fn, message) {
         fn();
         failed++;
         console.error(`  ❌ FAIL: ${message} (expected error but none thrown)`);
+    } catch (e) {
+        passed++;
+        console.log(`  ✅ PASS: ${message}`);
+    }
+}
+
+async function assertRejects(promise, message) {
+    try {
+        await promise;
+        failed++;
+        console.error(`  ❌ FAIL: ${message} (expected rejection but resolved)`);
     } catch (e) {
         passed++;
         console.log(`  ✅ PASS: ${message}`);
@@ -117,9 +128,89 @@ assert(stringUidParsed.issues[0].entries[0].uid === 7, 'String uid coerced to nu
 const fencedReview = '```json\n' + JSON.stringify({ issues: [{ type: 'other', severity: 'low', description: 'Fenced.', entries: [] }] }) + '\n```';
 assert(parseReviewResponse(fencedReview).issues.length === 1, 'Parses code-fenced review response');
 
-// Missing issues array throws
-assertThrows(() => parseReviewResponse('{"notIssues": []}'), 'Throws when "issues" array is missing');
+// ── Forgiving parser shapes (resilience) ──
+
+// A bare array (no wrapping object) is accepted
+const bareArray = JSON.stringify([
+    { type: 'duplicate', severity: 'high', description: 'Bare array issue.', entries: [] },
+]);
+assert(parseReviewResponse(bareArray).issues.length === 1, 'Accepts a bare top-level array');
+
+// A differently-named array property is accepted (e.g. "results")
+const altKey = JSON.stringify({ results: [
+    { type: 'overlap', severity: 'low', description: 'Alt-keyed issue.', entries: [] },
+] });
+assert(parseReviewResponse(altKey).issues.length === 1, 'Accepts a differently-named array property');
+
+// An empty object {} means "no issues found", not an error
+assert(parseReviewResponse('{}').issues.length === 0, 'Empty object yields no issues (not an error)');
+
+// A bare empty array means "no issues found"
+assert(parseReviewResponse('[]').issues.length === 0, 'Empty bare array yields no issues');
+
+// An object with only non-array properties is genuinely unreadable -> throws
+assertThrows(() => parseReviewResponse('{"foo": "bar"}'), 'Throws when no array can be found');
 assertThrows(() => parseReviewResponse('not json'), 'Throws on non-JSON review response');
+
+console.log('\n=== reviewEntries Resilience Tests ===\n');
+
+// Mock context whose generateRaw returns a scripted reply per call. `replies`
+// is an array of strings; each call returns the next one.
+function makeMockContext(replies) {
+    let call = 0;
+    return {
+        calls: () => call,
+        async generateRaw() {
+            const reply = replies[call] ?? replies[replies.length - 1];
+            call++;
+            return reply;
+        },
+    };
+}
+
+// Entries small enough to each be their own batch is hard to force; instead use
+// large entries so batchEntries splits them. Each ~5000 chars, budget 12000 ->
+// roughly 2 per batch. Use 6 entries -> 3 batches.
+const bigEntries = [];
+for (let i = 1; i <= 6; i++) bigEntries.push({ uid: i, comment: `E${i}`, key: [], content: 'x'.repeat(5000) });
+const expectedBatches = batchEntries(bigEntries, 12000).length;
+
+await (async () => {
+    // Every batch returns a good (empty) result -> no skips.
+    const good = JSON.stringify({ issues: [] });
+    const ctx = makeMockContext([good]);
+    const res = await reviewEntries(bigEntries, '', 2048, ctx);
+    assert(res.skippedBatches === 0, 'No batches skipped when all replies are readable');
+    assert(res.batchCount === expectedBatches, 'Reports the correct batch count');
+})();
+
+await (async () => {
+    // First batch is unreadable on BOTH the initial attempt and the retry,
+    // remaining batches are good. That batch should be skipped, not fatal.
+    // Call order: batch1 attempt1 (bad), batch1 attempt2 (bad), then good...
+    const bad = 'totally not json';
+    const goodWithIssue = JSON.stringify({ issues: [{ type: 'other', severity: 'low', description: 'Found one.', entries: [] }] });
+    const ctx = makeMockContext([bad, bad, goodWithIssue]);
+    const res = await reviewEntries(bigEntries, '', 2048, ctx);
+    assert(res.skippedBatches === 1, 'One unreadable batch is skipped (after retry), not fatal');
+    assert(res.issues.length >= 1, 'Issues from the readable batches are still returned');
+})();
+
+await (async () => {
+    // First attempt of a batch fails, but the retry succeeds -> not skipped.
+    const bad = 'nope';
+    const good = JSON.stringify({ issues: [] });
+    // batch1: bad then good (retry works); subsequent batches: good.
+    const ctx = makeMockContext([bad, good]);
+    const res = await reviewEntries(bigEntries, '', 2048, ctx);
+    assert(res.skippedBatches === 0, 'A batch that succeeds on retry is not skipped');
+})();
+
+await (async () => {
+    // Every reply is unreadable -> the whole review fails.
+    const ctx = makeMockContext(['garbage']);
+    await assertRejects(reviewEntries(bigEntries, '', 2048, ctx), 'Whole review rejects only when every batch is unreadable');
+})();
 
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
 process.exit(failed > 0 ? 1 : 0);

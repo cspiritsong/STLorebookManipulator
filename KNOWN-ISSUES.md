@@ -20,11 +20,11 @@
 - **Workaround**: Increase Max Tokens, or review subsets of the book. For now the batch budget (12000 chars) is generous enough that most books are one batch.
 - **Fix planned**: A future "second pass" could re-check flagged candidates across batches, or send entry summaries first.
 
-### LLM Fallback Parsing May Fail on Non-Compliant Models
-- **What**: When the active API backend doesn't support native JSON schema, the extension falls back to prompt engineering asking for JSON in a code block. Some models (especially small local models or RP fine-tunes) may ignore this and return prose or malformed output.
-- **Impact**: "Invalid response" error displayed to user. No data is lost or modified.
-- **Workaround**: Use a model/API that supports structured output (OpenAI, Claude, Gemini). Or increase max tokens — truncated JSON is a common failure mode.
-- **Fix planned**: A future release will add retry logic with progressively stricter prompts.
+### LLM May Not Produce Valid Structured Output On Weak Models
+- **What**: Some models (especially small local models or RP fine-tunes) struggle to return clean JSON. For a single-entry rewrite this surfaces as a friendly "AI did not reply in the right format" error. For a whole-book review, each batch is retried once with a strict format reminder; batches that still can't be read are skipped (you keep the rest), and the UI reports how many were skipped.
+- **Impact**: A rewrite may need a retry; a review may be partial on weak models. No data is lost or modified.
+- **Workaround**: Use a model/API that supports structured output (OpenAI, Claude, Gemini), and/or raise Max Response Tokens — truncated JSON is a common cause.
+- **Fix planned**: None needed for now; the retry + skip behavior handles this gracefully.
 
 ### localStorage Size Limits Not Monitored
 - **What**: Backups are stored in localStorage, which typically has a 5-10MB limit per origin. Large lorebooks with many backup entries could approach this limit silently.
