@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-01
+
+### Added
+- **Resolve multiple entries together**: when a review issue affects 2+ entries (e.g. a duplicate between two entries), the issue card now shows a single **"Resolve N entries together"** button instead of per-entry chips. The fix is generated **on demand, after** the review — never during it.
+- Clicking it opens a resolution popup. Press **Generate Fix Plan** and the LLM proposes one action per entry: **keep / rewrite / delete** (e.g. merge duplicates into one entry and delete the rest), each with a reason. Rewrites show a content diff; deletes show a clear warning.
+- Every action has a **checkbox** — you control exactly what applies. **Apply Selected** takes one backup, then applies only the ticked rewrites and deletes.
+- New `resolveIssue()` / `parseResolveResponse()` and `RESOLVE_SCHEMA` in `src/llm.js`; `openResolvePopup()` in `src/ui.js`; `tests/resolve.test.js` (14 tests).
+
+### Changed
+- Single-entry issues keep the existing per-entry editor flow unchanged.
+- Bumped version to 0.6.0.
+
 ## [0.5.1] - 2026-06-01
 
 ### Fixed

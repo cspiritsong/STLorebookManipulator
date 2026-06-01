@@ -1,4 +1,4 @@
-import { generateRewrite, reviewEntries } from './llm.js';
+import { generateRewrite, reviewEntries, resolveIssue } from './llm.js';
 import { computeDiff, renderInlineDiff, renderSideBySideDiff } from './diff.js';
 import { createBackup } from './backup.js';
 import { updateEntryFields, deleteEntry, getLorebookNames, loadLorebook, parseKeywordString } from './lorebook.js';
@@ -176,11 +176,19 @@ export async function openMainPopup(settings, context) {
             }
 
             showStatus(reviewStatus, `Found ${issues.length} issue(s) across ${batchCount} batch(es). Click an entry to fix it.${skipNote}`, 'success');
-            renderIssueList(issueListEl, issues, currentEntries, (entry, issue) => {
-                // Stack the editor on top so the issue list survives, and
-                // refresh the entry list when it closes.
-                openRewritePopup(entry, currentBookName, settings, context, issue, () => loadAndRender(currentBookName));
-            });
+            renderIssueList(
+                issueListEl,
+                issues,
+                currentEntries,
+                (entry, issue) => {
+                    // Single-entry issue → open the editor on top; refresh on close.
+                    openRewritePopup(entry, currentBookName, settings, context, issue, () => loadAndRender(currentBookName));
+                },
+                (issue, affectedEntries) => {
+                    // Multi-entry issue → open the cross-entry resolve flow.
+                    openResolvePopup(issue, affectedEntries, currentBookName, settings, context, () => loadAndRender(currentBookName));
+                },
+            );
         } catch (e) {
             console.error('[LorebookManipulator] Review failed:', e);
             showFriendlyError(reviewStatus, e);
@@ -233,11 +241,12 @@ function renderEntryList(container, entries, onEntryClick, onDeleteClick) {
     }
 }
 
-// Render the combined review issue list. Each issue shows its type/severity,
-// description, and a clickable chip per affected entry that opens the rewrite
-// flow pre-seeded with the issue. Entries the review couldn't map back to a
-// real uid are shown but disabled.
-function renderIssueList(container, issues, entries, onFixClick) {
+// Render the combined review issue list.
+// - Single-entry issue: a clickable chip opens the editor (onFixClick).
+// - Multi-entry issue: one "Resolve N entries together" button (onResolveClick)
+//   because the fix is a single cross-entry resolution (e.g. merge + delete).
+// Entries the review couldn't map back to a real uid are shown but disabled.
+function renderIssueList(container, issues, entries, onFixClick, onResolveClick) {
     container.innerHTML = '';
 
     const byUid = new Map(entries.map((e) => [e.uid, e]));
@@ -259,28 +268,49 @@ function renderIssueList(container, issues, entries, onFixClick) {
         desc.textContent = issue.description;
         card.appendChild(desc);
 
-        const chips = document.createElement('div');
-        chips.className = 'lm-issue-entries';
+        // Resolve only the entries we can actually map to the lorebook.
+        const resolvable = issue.entries
+            .map((ref) => byUid.get(ref.uid))
+            .filter((e) => e);
 
-        for (const ref of issue.entries) {
-            const entry = byUid.get(ref.uid);
-            const chip = document.createElement('button');
-            chip.className = 'menu_button lm-issue-chip';
+        if (resolvable.length >= 2) {
+            // Multi-entry issue: one button resolves them together.
+            const names = document.createElement('div');
+            names.className = 'lm-issue-affected';
+            names.textContent = 'Affects: ' + resolvable.map((e) => e.comment || `Entry #${e.uid}`).join(', ');
+            card.appendChild(names);
 
-            if (entry) {
-                chip.innerHTML = `<i class="fa-solid fa-wrench"></i> ${escapeHtml(entry.comment || `Entry #${entry.uid}`)}`;
-                chip.addEventListener('click', () => onFixClick(entry, issue));
-            } else {
-                // The model referenced an entry we can't resolve (bad/missing uid).
-                chip.disabled = true;
-                chip.title = 'This entry could not be matched to the lorebook.';
-                chip.innerHTML = `<i class="fa-solid fa-question"></i> ${escapeHtml(ref.name || 'Unknown entry')}`;
+            const resolveBtn = document.createElement('button');
+            resolveBtn.className = 'menu_button menu_button_icon lm-issue-resolve';
+            resolveBtn.innerHTML = `<i class="fa-solid fa-object-group"></i> Resolve ${resolvable.length} entries together`;
+            resolveBtn.addEventListener('click', () => onResolveClick(issue, resolvable));
+            card.appendChild(resolveBtn);
+        } else {
+            // Single-entry (or only one resolvable) issue: per-entry chips.
+            const chips = document.createElement('div');
+            chips.className = 'lm-issue-entries';
+
+            for (const ref of issue.entries) {
+                const entry = byUid.get(ref.uid);
+                const chip = document.createElement('button');
+                chip.className = 'menu_button lm-issue-chip';
+
+                if (entry) {
+                    chip.innerHTML = `<i class="fa-solid fa-wrench"></i> ${escapeHtml(entry.comment || `Entry #${entry.uid}`)}`;
+                    chip.addEventListener('click', () => onFixClick(entry, issue));
+                } else {
+                    // The model referenced an entry we can't resolve (bad/missing uid).
+                    chip.disabled = true;
+                    chip.title = 'This entry could not be matched to the lorebook.';
+                    chip.innerHTML = `<i class="fa-solid fa-question"></i> ${escapeHtml(ref.name || 'Unknown entry')}`;
+                }
+
+                chips.appendChild(chip);
             }
 
-            chips.appendChild(chip);
+            card.appendChild(chips);
         }
 
-        card.appendChild(chips);
         container.appendChild(card);
     }
 }
@@ -403,6 +433,200 @@ export async function openRewritePopup(entry, bookName, settings, context, issue
     rejectBtn?.addEventListener('click', () => {
         popup.completeCancelled();
     });
+}
+
+// Resolve a multi-entry issue with a single cross-entry plan. The plan is
+// generated ON DEMAND (after review), shown as one action per entry
+// (keep/rewrite/delete) with diffs and delete warnings, each toggleable.
+// Applying backs up once, then applies only the checked actions.
+export async function openResolvePopup(issue, affectedEntries, bookName, settings, context, onClose = null) {
+    const { Popup, POPUP_TYPE } = context;
+
+    const affectedList = affectedEntries
+        .map((e) => `<li>${escapeHtml(e.comment || `Entry #${e.uid}`)} <span class="lm-resolve-uid">(uid ${escapeHtml(String(e.uid))})</span></li>`)
+        .join('');
+
+    const popupHtml = `<div class="lm-resolve-popup">
+        <h3 class="lm-popup-title">Resolve ${affectedEntries.length} entries together</h3>
+        <div class="lm-issue-banner lm-issue-${escapeAttr(issue.severity)}">
+            <strong>${escapeHtml(issue.type)} (${escapeHtml(issue.severity)}):</strong> ${escapeHtml(issue.description)}
+        </div>
+        <p class="lm-resolve-affected-title">Affected entries:</p>
+        <ul class="lm-resolve-affected-list">${affectedList}</ul>
+
+        <div id="lm_resolve_status" class="lm-status"></div>
+        <div id="lm_resolve_plan" class="lm-resolve-plan"></div>
+
+        <div class="lm-popup-actions">
+            <button id="lm_resolve_generate" class="menu_button menu_button_icon">
+                <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Fix Plan
+            </button>
+            <button id="lm_resolve_apply" class="menu_button menu_button_icon" disabled>
+                <i class="fa-solid fa-check"></i> Apply Selected
+            </button>
+            <button id="lm_resolve_cancel" class="menu_button menu_button_icon">
+                <i class="fa-solid fa-xmark"></i> Cancel
+            </button>
+        </div>
+    </div>`;
+
+    const popup = new Popup(popupHtml, POPUP_TYPE.TEXT, '', {
+        wide: true,
+        large: true,
+        okButton: null,
+        cancelButton: 'Cancel',
+        allowVerticalScrolling: true,
+    });
+
+    popup.show().then(() => {
+        if (typeof onClose === 'function') onClose();
+    });
+
+    const container = document.querySelector('.lm-resolve-popup');
+    if (!container) return;
+
+    const generateBtn = container.querySelector('#lm_resolve_generate');
+    const applyBtn = container.querySelector('#lm_resolve_apply');
+    const cancelBtn = container.querySelector('#lm_resolve_cancel');
+    const planEl = container.querySelector('#lm_resolve_plan');
+    const statusEl = container.querySelector('#lm_resolve_status');
+
+    const byUid = new Map(affectedEntries.map((e) => [e.uid, e]));
+    let currentActions = null; // set after generating the plan
+
+    generateBtn?.addEventListener('click', async () => {
+        try {
+            showStatus(statusEl, 'Generating a fix plan...', 'loading');
+            generateBtn.disabled = true;
+            applyBtn.disabled = true;
+
+            const plan = await resolveIssue(issue, affectedEntries, settings.maxTokens, context, settings.connectionProfileId || null);
+            currentActions = plan.actions;
+
+            renderResolvePlan(planEl, plan, byUid, settings);
+
+            applyBtn.disabled = false;
+            const summary = plan.summary ? ` ${plan.summary}` : '';
+            showStatus(statusEl, `Plan ready.${summary} Untick anything you don't want, then Apply Selected.`, 'success');
+        } catch (e) {
+            console.error('[LorebookManipulator] Resolve generate failed:', e);
+            showFriendlyError(statusEl, e);
+            currentActions = null;
+        } finally {
+            generateBtn.disabled = false;
+        }
+    });
+
+    applyBtn?.addEventListener('click', async () => {
+        if (!currentActions) return;
+
+        // Collect only the checked actions that actually change something.
+        const checkboxes = planEl.querySelectorAll('.lm-resolve-action-check');
+        const toApply = [];
+        checkboxes.forEach((cb) => {
+            if (!cb.checked) return;
+            const uid = Number(cb.dataset.uid);
+            const action = currentActions.find((a) => a.uid === uid);
+            if (action && (action.action === 'rewrite' || action.action === 'delete')) {
+                toApply.push(action);
+            }
+        });
+
+        if (toApply.length === 0) {
+            showStatus(statusEl, 'Nothing selected to apply. Tick at least one change, or Cancel.', 'error');
+            return;
+        }
+
+        try {
+            showStatus(statusEl, 'Applying changes...', 'loading');
+            applyBtn.disabled = true;
+            generateBtn.disabled = true;
+
+            // One backup before the whole batch of changes.
+            const bookData = await context.loadWorldInfo(bookName);
+            createBackup(bookName, bookData, settings.backupRetention);
+
+            // Apply rewrites first, then deletes (so a delete can't shift a
+            // rewrite target — uids are stable anyway, but this is tidy).
+            const rewrites = toApply.filter((a) => a.action === 'rewrite');
+            const deletes = toApply.filter((a) => a.action === 'delete');
+
+            for (const a of rewrites) {
+                await updateEntryFields(bookName, a.uid, { content: a.newContent }, context);
+            }
+            for (const a of deletes) {
+                await deleteEntry(bookName, a.uid, context);
+            }
+
+            showStatus(statusEl, `Applied ${rewrites.length} rewrite(s) and ${deletes.length} deletion(s). Backup saved.`, 'success');
+            toastr.success('Issue resolved. Restore from Backup History if needed.');
+
+            setTimeout(() => popup.completeCancelled(), 1200);
+        } catch (e) {
+            console.error('[LorebookManipulator] Resolve apply failed:', e);
+            showFriendlyError(statusEl, e);
+            applyBtn.disabled = false;
+            generateBtn.disabled = false;
+        }
+    });
+
+    cancelBtn?.addEventListener('click', () => {
+        popup.completeCancelled();
+    });
+}
+
+// Render the resolution plan: one row per action with a checkbox. Rewrites
+// show a content diff; deletes show a clear warning. Defaults: rewrite/delete
+// ticked, keep shown but disabled (nothing to apply).
+function renderResolvePlan(container, plan, byUid, settings) {
+    container.innerHTML = '';
+
+    for (const action of plan.actions) {
+        const entry = byUid.get(action.uid);
+        const name = entry ? (entry.comment || `Entry #${entry.uid}`) : `Entry uid ${action.uid}`;
+
+        const row = document.createElement('div');
+        row.className = `lm-resolve-row lm-resolve-${action.action}`;
+
+        const changes = action.action !== 'keep';
+
+        const header = document.createElement('label');
+        header.className = 'lm-resolve-row-header';
+        const checkedAttr = changes ? 'checked' : '';
+        const disabledAttr = changes ? '' : 'disabled';
+        const actionLabel = action.action.toUpperCase();
+        header.innerHTML = `
+            <input type="checkbox" class="lm-resolve-action-check" data-uid="${escapeAttr(String(action.uid))}" ${checkedAttr} ${disabledAttr} />
+            <span class="lm-resolve-action-tag lm-resolve-tag-${action.action}">${escapeHtml(actionLabel)}</span>
+            <span class="lm-resolve-entry-name">${escapeHtml(name)}</span>
+        `;
+        row.appendChild(header);
+
+        if (action.reason) {
+            const reason = document.createElement('div');
+            reason.className = 'lm-resolve-reason';
+            reason.textContent = action.reason;
+            row.appendChild(reason);
+        }
+
+        if (action.action === 'rewrite' && entry) {
+            const diffResult = computeDiff(entry.content || '', action.newContent || '');
+            const diffHtml = settings.diffStyle === 'side-by-side'
+                ? renderSideBySideDiff(diffResult)
+                : renderInlineDiff(diffResult);
+            const diffWrap = document.createElement('div');
+            diffWrap.className = 'lm-resolve-diff';
+            diffWrap.innerHTML = diffHtml;
+            row.appendChild(diffWrap);
+        } else if (action.action === 'delete') {
+            const warn = document.createElement('div');
+            warn.className = 'lm-resolve-delete-warning';
+            warn.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> This entry will be deleted. A backup is saved first.';
+            row.appendChild(warn);
+        }
+
+        container.appendChild(row);
+    }
 }
 
 function buildPopupHtml(entry, issue = null) {

@@ -75,6 +75,51 @@ const REVIEW_SCHEMA = {
     },
 };
 
+// Schema for resolving a single review issue that affects one or more entries.
+// The model returns one action per affected entry: keep it as-is, rewrite its
+// content, or delete it (e.g. when merging duplicates into one keeper).
+const RESOLVE_SCHEMA = {
+    name: 'LorebookResolution',
+    strict: true,
+    value: {
+        '$schema': 'http://json-schema.org/draft-04/schema#',
+        type: 'object',
+        properties: {
+            summary: {
+                type: 'string',
+                description: 'One sentence explaining the overall plan.',
+            },
+            actions: {
+                type: 'array',
+                description: 'One action per affected entry.',
+                items: {
+                    type: 'object',
+                    properties: {
+                        uid: { type: 'number', description: 'The exact uid of the entry this action applies to.' },
+                        action: {
+                            type: 'string',
+                            enum: ['keep', 'rewrite', 'delete'],
+                            description: 'keep = leave unchanged; rewrite = replace content; delete = remove entry.',
+                        },
+                        newContent: {
+                            type: 'string',
+                            description: 'The new content when action is "rewrite". Empty otherwise.',
+                        },
+                        reason: {
+                            type: 'string',
+                            description: 'Brief reason for this action.',
+                        },
+                    },
+                    required: ['uid', 'action', 'newContent', 'reason'],
+                    additionalProperties: false,
+                },
+            },
+        },
+        required: ['summary', 'actions'],
+        additionalProperties: false,
+    },
+};
+
 // ── LLM request router ───────────────────────────────────────────────────
 
 // Normalize the many response shapes into a single JSON string so the parsers
@@ -302,6 +347,58 @@ Report issues as JSON with an "issues" array. Reference each affected entry by i
     return { issues: allIssues, batchCount: batches.length, skippedBatches };
 }
 
+// ── Resolve a single issue across its affected entries ───────────────────
+
+// Generate a resolution plan for one review issue. `affectedEntries` is the
+// array of full entry objects the issue points at. Returns
+// { summary, actions: [{ uid, action, newContent, reason }] }.
+export async function resolveIssue(issue, affectedEntries, maxTokens, context, profileId = null) {
+    if (!issue || typeof issue !== 'object') {
+        throw new Error('No issue provided to resolve.');
+    }
+    if (!Array.isArray(affectedEntries) || affectedEntries.length === 0) {
+        throw new Error('No affected entries to resolve.');
+    }
+
+    const systemPrompt = `You are a lorebook editor resolving a specific problem that spans one or more entries.
+
+You will be given the problem and the full text of every affected entry. Produce a concrete plan with ONE action per entry:
+- "keep": leave the entry unchanged.
+- "rewrite": replace the entry's content (provide newContent).
+- "delete": remove the entry entirely.
+
+GUIDELINES:
+- For duplicates/overlap: pick ONE entry to keep (rewrite it to hold the merged, complete information) and mark the others "delete". Don't lose unique facts — fold them into the kept entry.
+- For verbosity: "rewrite" the entry more concisely.
+- For contradictions: "rewrite" the entries so they agree.
+- Preserve all unique factual content. Never invent new facts.
+- Use the EXACT uid of each entry. Include an action for every affected entry.
+- Return ONLY valid JSON matching the schema. No markdown, no commentary outside the JSON.`;
+
+    const entriesText = affectedEntries.map((e) => {
+        const keys = (e.key || []).join(', ') || '(no keys)';
+        return `--- Entry uid=${e.uid} | name="${e.comment || `Entry #${e.uid}`}" | keys=[${keys}] ---\n${e.content || ''}`;
+    }).join('\n\n');
+
+    const userPrompt = `## Problem (${issue.type}, ${issue.severity})
+${issue.description}
+
+## Affected Entries
+${entriesText}
+
+Produce a resolution plan as JSON with a "summary" and an "actions" array (one action per entry, referenced by exact uid).`;
+
+    const result = await callLLM({
+        systemPrompt,
+        prompt: userPrompt,
+        responseLength: maxTokens || 2048,
+        jsonSchema: RESOLVE_SCHEMA,
+        profileId,
+    }, context);
+
+    return parseResolveResponse(result, affectedEntries);
+}
+
 // ── Response parsing ─────────────────────────────────────────────────────
 
 // Extract a JSON object from raw model output. Tolerates code fences and
@@ -423,4 +520,57 @@ export function parseReviewResponse(rawText) {
         .filter((it) => it.description !== '');
 
     return { issues };
+}
+
+// Parse and sanitize a resolution plan. `affectedEntries` is used to coerce
+// uids and to ignore actions referencing entries that aren't part of the issue.
+// Returns { summary, actions: [{ uid, action, newContent, reason }] }.
+export function parseResolveResponse(rawText, affectedEntries = []) {
+    const parsed = extractJson(rawText);
+
+    // Locate the actions array from a few possible shapes.
+    let rawActions;
+    if (Array.isArray(parsed)) {
+        rawActions = parsed;
+    } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.actions)) {
+        rawActions = parsed.actions;
+    } else if (parsed && typeof parsed === 'object') {
+        const arrayProp = Object.values(parsed).find((v) => Array.isArray(v));
+        rawActions = arrayProp || null;
+    } else {
+        rawActions = null;
+    }
+
+    if (!Array.isArray(rawActions)) {
+        throw new Error('Resolution response missing an "actions" array.');
+    }
+
+    const validActions = ['keep', 'rewrite', 'delete'];
+    const allowedUids = new Set(affectedEntries.map((e) => e.uid));
+
+    const actions = rawActions
+        .filter((a) => a && typeof a === 'object')
+        .map((a) => {
+            const uid = typeof a.uid === 'number'
+                ? a.uid
+                : (Number.isFinite(Number(a.uid)) ? Number(a.uid) : null);
+            return {
+                uid,
+                action: validActions.includes(a.action) ? a.action : 'keep',
+                newContent: typeof a.newContent === 'string' ? a.newContent : '',
+                reason: typeof a.reason === 'string' ? a.reason.trim() : '',
+            };
+        })
+        // Only keep actions that target an entry actually part of this issue.
+        .filter((a) => a.uid !== null && (allowedUids.size === 0 || allowedUids.has(a.uid)))
+        // A "rewrite" with no new content is meaningless; treat it as "keep".
+        .map((a) => (a.action === 'rewrite' && a.newContent.trim() === '' ? { ...a, action: 'keep' } : a));
+
+    if (actions.length === 0) {
+        throw new Error('Resolution response had no usable actions.');
+    }
+
+    const summary = parsed && typeof parsed.summary === 'string' ? parsed.summary.trim() : '';
+
+    return { summary, actions };
 }

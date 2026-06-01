@@ -9,6 +9,7 @@ A SillyTavern extension for safely rewriting and pruning lorebook entries using 
 
 - Browse entries in any of your SillyTavern lorebooks
 - **Review the whole book**: ask the LLM to scan all entries and recommend fixes (duplicates, overlap, verbosity, contradictions). Large books are auto-batched to fit the model's context window.
+- **Resolve issues that span multiple entries** with a single cross-entry plan (e.g. merge duplicates into one and delete the rest), generated on demand and applied only after you approve each action
 - **Edit an entry's title, primary keys, secondary keys, and content** directly — by hand or with AI help
 - Send individual entries to the LLM with a rewrite/prune prompt
 - **Delete entries** (with automatic backup first) to clear out duplicates and dead weight
@@ -63,8 +64,9 @@ Click the book icon (open-book) added to the character sheet, group panel, and r
 **To review the whole book:**
 1. (Optional) Type what to focus on in the review box (e.g. "find duplicate lore"). Leave blank for a general review.
 2. Click **Review & Recommend Fixes**. Large books are automatically split into batches.
-3. A list of issues appears, color-coded by severity (duplicate, overlap, verbose, contradiction, other)
-4. Click an affected entry on any issue to open the editor, pre-filled with that issue, and fix it through the normal diff/save flow
+3. A list of issues appears, color-coded by severity (duplicate, overlap, verbose, contradiction, other). The review only *finds* problems — fixes are generated later, on demand.
+4. **For an issue affecting one entry**: click it to open the editor, pre-filled with the issue, and fix it through the normal diff/save flow.
+5. **For an issue affecting two or more entries** (e.g. a duplicate): click **Resolve N entries together**. In the popup, click **Generate Fix Plan** — the AI proposes one action per entry (keep / rewrite / delete), e.g. merge the duplicates into one entry and delete the rest. Each action has a checkbox; untick anything you don't want, then **Apply Selected** (a backup is saved first).
 
 Use **Backup History** in the extension settings drawer to restore any previous state.
 

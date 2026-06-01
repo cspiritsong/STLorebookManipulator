@@ -422,3 +422,115 @@
 .lm-issue-banner.lm-issue-high {
     border-left-color: #ff6b6b;
 }
+
+/* === Resolve-together (multi-entry) flow === */
+
+/* The "Resolve N entries together" button on a multi-entry issue card */
+.lm-issue-resolve {
+    margin-top: 8px;
+}
+
+.lm-issue-affected {
+    font-size: 0.85em;
+    color: var(--SmartThemeSubtleColor, #aaa);
+    margin: 6px 0;
+}
+
+.lm-resolve-affected-title {
+    font-weight: bold;
+    margin: 10px 0 4px;
+}
+
+.lm-resolve-affected-list {
+    margin: 0 0 10px;
+    padding-left: 20px;
+    font-size: 0.9em;
+}
+
+.lm-resolve-uid {
+    color: var(--SmartThemeSubtleColor, #888);
+    font-size: 0.85em;
+}
+
+.lm-resolve-plan {
+    margin-top: 10px;
+}
+
+/* One row per planned action */
+.lm-resolve-row {
+    padding: 10px;
+    margin-bottom: 8px;
+    border-radius: 5px;
+    border-left: 4px solid var(--SmartThemeBorderColor, #666);
+    background: var(--SmartThemeBlurTintColor, #2a2a2a);
+}
+
+.lm-resolve-keep {
+    border-left-color: #888;
+    opacity: 0.75;
+}
+
+.lm-resolve-rewrite {
+    border-left-color: #6bff6b;
+}
+
+.lm-resolve-delete {
+    border-left-color: #ff6b6b;
+}
+
+.lm-resolve-row-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.lm-resolve-action-tag {
+    font-size: 0.7em;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+.lm-resolve-tag-keep {
+    background: rgba(150, 150, 150, 0.25);
+}
+
+.lm-resolve-tag-rewrite {
+    background: rgba(0, 200, 0, 0.2);
+    color: #6bff6b;
+}
+
+.lm-resolve-tag-delete {
+    background: rgba(255, 80, 80, 0.2);
+    color: #ff6b6b;
+}
+
+.lm-resolve-entry-name {
+    flex: 1;
+    min-width: 0;
+}
+
+.lm-resolve-reason {
+    font-size: 0.85em;
+    color: var(--SmartThemeSubtleColor, #aaa);
+    margin: 6px 0;
+    line-height: 1.5;
+}
+
+.lm-resolve-diff {
+    margin-top: 6px;
+    padding: 6px 8px;
+    background: var(--SmartThemeBotMesBlurTintColor, rgba(0, 0, 0, 0.2));
+    border-radius: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.lm-resolve-delete-warning {
+    margin-top: 6px;
+    font-size: 0.85em;
+    color: #ff8a8a;
+}

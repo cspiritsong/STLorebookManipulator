@@ -15,9 +15,9 @@ STLorebookManipulator/
 ├── src/
 │   ├── backup.js          # Backup history management, restore, file download
 │   ├── lorebook.js        # Load/save/reload lorebook data via ST World Info API
-│   ├── llm.js             # LLM calls via generateRaw(): single-entry rewrite + whole-book review (batching, JSON schema parsing)
+│   ├── llm.js             # LLM calls: single-entry rewrite, whole-book review (batching), multi-entry resolve; JSON schema parsing
 │   ├── diff.js            # Word-level diff computation, inline/side-by-side HTML rendering
-│   ├── ui.js              # Popup creation, entry editor, review/issue list, handlers
+│   ├── ui.js              # Popup creation, entry editor, review/issue list, resolve flow, handlers
 │   ├── errors.js          # Maps raw errors to newbie-friendly title/what/fix guidance
 │   └── utils.js           # Shared HTML escaping helpers (escapeHtml, escapeAttr)
 ├── prompts/
@@ -26,7 +26,8 @@ STLorebookManipulator/
 │   ├── backup.test.js     # Unit tests for backup create/restore/download
 │   ├── diff.test.js       # Unit tests for diff accuracy and rendering
 │   ├── llm.test.js        # Unit tests for rewrite parsing + response normalization
-│   ├── review.test.js     # Unit tests for review batching + issue parsing
+│   ├── review.test.js     # Unit tests for review batching, parsing, resilience
+│   ├── resolve.test.js    # Unit tests for multi-entry resolution parsing
 │   ├── lorebook.test.js   # Unit tests for field editing, deletion, sanitization
 │   ├── errors.test.js     # Unit tests for friendly error mapping
 │   ├── utils.test.js      # Unit tests for HTML escaping helpers
@@ -70,13 +71,15 @@ STLorebookManipulator/
 
 ### src/llm.js — LLM Interaction
 - **generateRewrite(entryContent, promptText, maxTokens, context, profileId=null)**: Single-entry rewrite with structured output. Returns `{ rewrittenContent, justification }`.
-- **reviewEntries(entries, instructions, maxTokens, context, options)**: Whole-book review. Auto-batches entries via `batchEntries`, sends each batch with the review JSON schema, and combines results into one issue list. Reports progress via `options.onProgress(current, total)`. `options.profileId` selects a connection profile. Returns `{ issues, batchCount }`.
+- **reviewEntries(entries, instructions, maxTokens, context, options)**: Whole-book review. Auto-batches entries via `batchEntries`, sends each batch with the review JSON schema, and combines results into one issue list. Retries an unreadable batch once with a strict format reminder, then skips it (non-fatal). Reports progress via `options.onProgress(current, total)`. `options.profileId` selects a connection profile. Returns `{ issues, batchCount, skippedBatches }`; throws only if every batch is unreadable.
+- **resolveIssue(issue, affectedEntries, maxTokens, context, profileId=null)**: Generates a cross-entry resolution plan for one multi-entry issue. Returns `{ summary, actions: [{ uid, action: 'keep'|'rewrite'|'delete', newContent, reason }] }` via `RESOLVE_SCHEMA`.
 - **callLLM({ systemPrompt, prompt, responseLength, jsonSchema, profileId }, context)** (internal): The request router. When `profileId` is set, sends through `ConnectionManagerRequestService.sendRequest()` (json_schema passed as an override payload); otherwise uses `generateRaw()` on the active connection. Returns a normalized string.
 - **normalizeLLMContent(result)**: Collapses every response shape into a single JSON string. `generateRaw` returns a string; `ConnectionManagerRequestService` returns `ExtractedData` whose `.content` is a string normally but an already-*parsed object* when json_schema is used. This helper re-stringifies parsed objects so the parsers below work identically across backends. Unit-tested.
 - **batchEntries(entries, maxBatchChars=12000)**: Pure function that splits entries into batches so each batch's combined text stays under a character budget. An oversized single entry gets its own batch (never dropped). Unit-tested directly.
 - **parseLLMResponse(rawText)**: Validates and returns the rewrite result.
-- **parseReviewResponse(rawText)**: Validates and sanitizes the review result — drops malformed/description-less issues, coerces invalid type/severity to safe defaults, coerces string uids to numbers.
-- **extractJson(rawText)** (internal): Shared JSON extraction (handles code fences, surrounding prose). Used by both parsers so the logic lives in one place.
+- **parseReviewResponse(rawText)**: Forgiving review parser — accepts `{issues:[...]}`, a bare array, a differently-named array property, or an empty `{}` (= no issues). Drops malformed/description-less issues, coerces invalid type/severity to safe defaults, coerces string uids to numbers.
+- **parseResolveResponse(rawText, affectedEntries)**: Forgiving resolution parser — finds the actions array, coerces uids/actions, downgrades an empty rewrite to "keep", and drops actions targeting uids outside the issue. Throws if no usable actions remain.
+- **extractJson(rawText)** (internal): Shared JSON extraction (handles code fences, surrounding prose, and a bare top-level object **or** array). Used by all parsers so the logic lives in one place.
 - ST's `generateRaw` uses `responseLength` (not `max_tokens`) and, when `jsonSchema` is set, returns the extracted JSON string directly.
 
 ### src/diff.js — Diff Computation & Rendering
@@ -89,8 +92,10 @@ STLorebookManipulator/
 - **openMainPopup(settings, context)**: Standalone popup opened by the quick-access button. Shows the lorebook selector, the whole-book review panel (instruction box + Review button + issue list), and the entry list. Caches loaded entries so review results (which reference entries by uid) can be mapped back to real entry objects. Holds `loadAndRender` (refreshes the list, e.g. after a delete) and `handleDeleteEntry` (confirm → backup → delete → refresh).
 - **openRewritePopup(entry, bookName, settings, context, issue=null, onClose=null)**: The entry editor popup. Editable inputs for title, primary keys, secondary keys, and an always-visible **content textarea** (shows the current content). Optional **Generate Suggestion** rewrites the content: it diffs against the current box text, shows the highlighted diff, and drops the suggestion into the box for further tweaking. **Save** writes all four editable fields (content read straight from the box), backs up first, then calls `updateEntryFields`. Stacks on top of the main popup; `onClose` (run when the popup is dismissed) lets the caller refresh its list. When `issue` is provided (from a review), shows an issue banner and appends the issue to the rewrite instruction. Errors surface via `showFriendlyError`.
 - **renderEntryList(container, entries, onEntryClick, onDeleteClick)** (internal): Renders each entry with a clickable body (opens editor) and a trash button (delete). The trash click stops propagation so it doesn't also open the editor.
-- **renderIssueList(container, issues, entries, onFixClick)** (internal): Renders review issues as severity-colored cards with a clickable chip per affected entry. Chips for unresolvable uids are disabled.
-- Save triggers: backup → updateEntryFields → close popup. Delete triggers: confirm → backup → deleteEntry → refresh list. Cancel simply closes.
+- **renderIssueList(container, issues, entries, onFixClick, onResolveClick)** (internal): Renders review issues as severity-colored cards. A single-entry issue shows a per-entry chip (→ `onFixClick`, opens the editor). A multi-entry issue shows one "Resolve N entries together" button (→ `onResolveClick`). Chips for unresolvable uids are disabled.
+- **openResolvePopup(issue, affectedEntries, bookName, settings, context, onClose=null)**: The cross-entry resolution popup. **Generate Fix Plan** calls `resolveIssue` on demand; the plan renders one row per action (keep/rewrite/delete) with a checkbox, a content diff for rewrites, and a warning for deletes. **Apply Selected** takes one backup, then applies only the ticked rewrites (`updateEntryFields`) and deletes (`deleteEntry`). Stacks on top; `onClose` refreshes the caller's list.
+- **renderResolvePlan(container, plan, byUid, settings)** (internal): Renders the action rows; rewrite/delete are ticked by default, keep is shown disabled.
+- Save triggers: backup → updateEntryFields → close popup. Delete triggers: confirm → backup → deleteEntry → refresh list. Resolve triggers: generate plan → user toggles actions → backup → apply checked. Cancel simply closes.
 
 ### src/utils.js — Shared Helpers
 - **escapeHtml(text)**: Escapes `& < > " '` for safe insertion into HTML content. Pure string implementation (no DOM dependency) so it works in both browser and Node test environments.

@@ -11,6 +11,7 @@ const tests = [
     'errors.test.js',
     'llm.test.js',
     'review.test.js',
+    'resolve.test.js',
     'diff.test.js',
     'backup.test.js',
     'lorebook.test.js',
