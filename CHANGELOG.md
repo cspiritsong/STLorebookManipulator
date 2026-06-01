@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-06-01
+
+### Fixed
+- Pressing **Close** on the main popup no longer throws away your work. The selected lorebook, the review instructions you typed, and the review results you generated are now remembered for the session. Reopening the popup restores your last lorebook and re-shows the issue list — so an accidental Close doesn't cost you another (token-spending) review. Selecting a different lorebook clears the cached review, since it belonged to the old book.
+
 ## [0.6.0] - 2026-06-01
 
 ### Added

@@ -18,6 +18,18 @@ export function getPromptText(preset, customPrompt) {
     return PROMPT_PRESETS[preset] || PROMPT_PRESETS.prune;
 }
 
+// Module-level session cache. The main popup is destroyed when closed, so
+// without this, pressing Close throws away the selected lorebook, the review
+// instructions, and (most painfully) the review results the user just spent
+// tokens to generate. We keep that here so reopening restores it.
+// review is { issues, batchCount, skippedBatches } and is invalidated when a
+// different book is selected.
+const sessionCache = {
+    bookName: null,
+    instructions: '',
+    review: null,
+};
+
 export async function openMainPopup(settings, context) {
     const { Popup, POPUP_TYPE } = context;
 
@@ -129,6 +141,9 @@ export async function openMainPopup(settings, context) {
         const bookName = select.value;
         if (!bookName) return;
         currentBookName = bookName;
+        // Remember the choice; the previous review belonged to a different book.
+        sessionCache.bookName = bookName;
+        sessionCache.review = null;
 
         try {
             issueListEl.innerHTML = '';
@@ -143,6 +158,43 @@ export async function openMainPopup(settings, context) {
         }
     });
 
+    // Persist the review instructions as they type, so Close doesn't lose them.
+    reviewInstructions?.addEventListener('input', () => {
+        sessionCache.instructions = reviewInstructions.value;
+    });
+
+    // Render a review result (status line + issue list). Shared by the Review
+    // button and by session restore, so reopening shows the results you already
+    // generated instead of a blank panel.
+    function showReview(reviewData) {
+        const { issues, batchCount, skippedBatches } = reviewData;
+
+        const skipNote = skippedBatches > 0
+            ? ` (${skippedBatches} of ${batchCount} batch(es) couldn't be read and were skipped — try raising Max Response Tokens or a more capable model for a complete review.)`
+            : '';
+
+        if (issues.length === 0) {
+            issueListEl.innerHTML = '';
+            showStatus(reviewStatus, `No issues found across ${batchCount} batch(es). Your lorebook looks clean.${skipNote}`, skippedBatches > 0 ? 'error' : 'success');
+            return;
+        }
+
+        showStatus(reviewStatus, `Found ${issues.length} issue(s) across ${batchCount} batch(es). Click an entry to fix it.${skipNote}`, 'success');
+        renderIssueList(
+            issueListEl,
+            issues,
+            currentEntries,
+            (entry, issue) => {
+                // Single-entry issue → open the editor on top; refresh on close.
+                openRewritePopup(entry, currentBookName, settings, context, issue, () => loadAndRender(currentBookName));
+            },
+            (issue, affectedEntries) => {
+                // Multi-entry issue → open the cross-entry resolve flow.
+                openResolvePopup(issue, affectedEntries, currentBookName, settings, context, () => loadAndRender(currentBookName));
+            },
+        );
+    }
+
     reviewBtn?.addEventListener('click', async () => {
         if (!currentBookName || currentEntries.length === 0) return;
 
@@ -151,7 +203,7 @@ export async function openMainPopup(settings, context) {
             issueListEl.innerHTML = '';
             showStatus(reviewStatus, 'Reviewing entries...', 'loading');
 
-            const { issues, batchCount, skippedBatches } = await reviewEntries(
+            const reviewData = await reviewEntries(
                 currentEntries,
                 reviewInstructions.value,
                 settings.maxTokens,
@@ -164,31 +216,9 @@ export async function openMainPopup(settings, context) {
                 },
             );
 
-            // If some batches couldn't be read, tell the user — but we still
-            // show whatever the readable batches found.
-            const skipNote = skippedBatches > 0
-                ? ` (${skippedBatches} of ${batchCount} batch(es) couldn't be read and were skipped — try raising Max Response Tokens or a more capable model for a complete review.)`
-                : '';
-
-            if (issues.length === 0) {
-                showStatus(reviewStatus, `No issues found across ${batchCount} batch(es). Your lorebook looks clean.${skipNote}`, skippedBatches > 0 ? 'error' : 'success');
-                return;
-            }
-
-            showStatus(reviewStatus, `Found ${issues.length} issue(s) across ${batchCount} batch(es). Click an entry to fix it.${skipNote}`, 'success');
-            renderIssueList(
-                issueListEl,
-                issues,
-                currentEntries,
-                (entry, issue) => {
-                    // Single-entry issue → open the editor on top; refresh on close.
-                    openRewritePopup(entry, currentBookName, settings, context, issue, () => loadAndRender(currentBookName));
-                },
-                (issue, affectedEntries) => {
-                    // Multi-entry issue → open the cross-entry resolve flow.
-                    openResolvePopup(issue, affectedEntries, currentBookName, settings, context, () => loadAndRender(currentBookName));
-                },
-            );
+            // Cache the (token-costly) results so Close/reopen doesn't lose them.
+            sessionCache.review = reviewData;
+            showReview(reviewData);
         } catch (e) {
             console.error('[LorebookManipulator] Review failed:', e);
             showFriendlyError(reviewStatus, e);
@@ -196,6 +226,28 @@ export async function openMainPopup(settings, context) {
             reviewBtn.disabled = false;
         }
     });
+
+    // Restore the previous session: reselect the last lorebook, refill the
+    // instructions, and re-render the review results if we still have them.
+    // Done without dispatching the select 'change' event so the cached review
+    // isn't cleared.
+    (async () => {
+        if (reviewInstructions && sessionCache.instructions) {
+            reviewInstructions.value = sessionCache.instructions;
+        }
+        if (sessionCache.bookName && bookNames.includes(sessionCache.bookName)) {
+            select.value = sessionCache.bookName;
+            currentBookName = sessionCache.bookName;
+            try {
+                await loadAndRender(sessionCache.bookName);
+                if (sessionCache.review) {
+                    showReview(sessionCache.review);
+                }
+            } catch (e) {
+                console.error('[LorebookManipulator] Session restore failed:', e);
+            }
+        }
+    })();
 }
 
 // Render the clickable entry list into a container. Clicking the body opens
