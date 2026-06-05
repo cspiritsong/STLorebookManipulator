@@ -71,7 +71,6 @@ Full file-by-file breakdown is in `ARCHITECTURE.md`. Summary here for quick refe
 - `manifest.json` — ST extension metadata. Version, entry point (`index.js`), style (`style.css`), minimum ST version, GitHub home.
 - `settings.html` — handlebars template rendered into the Extensions drawer. Contains the settings UI (lorebook selector, connection profile dropdown, diff style, backup retention, prompt preset, custom prompt textarea, max tokens, backup history).
 - `style.css` — all styles.
-- `prompts/rewrite.hbs` — prompt template (referenced in ARCHITECTURE but not actively loaded; rewrite prompt is hardcoded in `llm.js` currently).
 - `tests/` — 10 test files + runner. 180 tests pass. Covers: syntax safety, all buttons typed, HTML escaping, parse functions, batching resilience, review fixed-tracking, backup, lorebook CRUD, resolve parsing.
 
 ---
@@ -129,7 +128,7 @@ We benchmarked against the [World Info Recommender](https://github.com/bmen25124
 - **Whole-book review cannot detect cross-batch issues** (e.g. duplicates across two batches). Most personal lorebooks fit in one batch. Documented in KNOWN-ISSUES.md.
 - **Connection profile dropdown is populated once at load.** Creating/renaming/deleting profiles afterward requires a reload. Future: subscribe to ST events.
 - **FIXED tracking is per-session memory**, not a real re-check. If you fix one duplicate but a separate issue references the same entry, that other issue won't auto-badge. Intentional (no extra token cost), but the user should know.
-- **Prompt template `prompts/rewrite.hbs` is unused at runtime** — the rewrite prompt is hardcoded in `llm.js`. A future session could load it from the file.
+- **Prompt template `prompts/rewrite.hbs` was unused and has been removed** — the rewrite prompt is hardcoded in `llm.js`.
 - **Review uses `settings.maxTokens`** (the rewrite setting). A separate token budget for reviews would make the model more thorough for large books. Not yet built.
 - **Tests can't cover popup/DOM wiring** (close/restore/back behavior) without mocking all of SillyTavern's Popup+DOM. `syntax.test.js` and `button-type.test.js` guard structure; the *behavior* needs a manual smoke test.
 

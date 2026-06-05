@@ -20,8 +20,6 @@ STLorebookManipulator/
 │   ├── ui.js              # Popup creation, entry editor, review/issue list, resolve flow, handlers
 │   ├── errors.js          # Maps raw errors to newbie-friendly title/what/fix guidance
 │   └── utils.js           # Shared HTML escaping helpers (escapeHtml, escapeAttr)
-├── prompts/
-│   └── rewrite.hbs        # Handlebars template for rewrite system/user prompts
 ├── tests/
 │   ├── backup.test.js     # Unit tests for backup create/restore/download
 │   ├── diff.test.js       # Unit tests for diff accuracy and rendering
@@ -108,14 +106,6 @@ STLorebookManipulator/
 - **renderFriendlyError(error, escapeHtml)**: Renders the explanation as an HTML block. `escapeHtml` is injected so the module stays DOM-free and testable.
 - Used by `ui.js` (`showFriendlyError`) wherever an operation can fail: review, generate, save, delete, and lorebook load.
 
-### prompts/rewrite.hbs — Prompt Templates
-- Handlebars template with variables: `{{entryContent}}`, `{{customInstructions}}`
-- Three built-in presets injected as `customInstructions`:
-  - **Prune**: "Shorten this entry for brevity while preserving all factual content. Remove redundancy."
-  - **Clarify**: "Improve clarity and readability without changing length or removing information."
-  - **Fix Grammar**: "Correct grammar, spelling, and punctuation. Do not change meaning or structure."
-- Custom override replaces `customInstructions` entirely.
-
 ## Data Flow
 
 ```
@@ -170,7 +160,8 @@ Settings stored in `SillyTavern.getContext().extensionSettings['lorebook_manipul
     backupRetention: 5,            // number of backups to keep per lorebook
     promptPreset: 'prune',         // 'prune' | 'clarify' | 'grammar' | 'custom'
     customPrompt: '',              // user-defined prompt text
-    maxTokens: 1024,               // max LLM response tokens
+    maxTokens: 1024,               // max LLM response tokens (rewrite & review)
+    reviewBatchBudget: 12000,      // char budget per batch for whole-book review
     connectionProfileId: ''        // '' = active connection; else a Connection Manager profile id
 }
 ```

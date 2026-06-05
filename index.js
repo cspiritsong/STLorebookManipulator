@@ -1,105 +1,128 @@
-import { getLorebookNames, loadLorebook } from './src/lorebook.js';
-import { getBackupHistory, restoreBackup, downloadBackup } from './src/backup.js';
-import { openRewritePopup, openMainPopup, getPromptText } from './src/ui.js';
-import { escapeHtml, escapeAttr } from './src/utils.js';
+import { getLorebookNames, loadLorebook } from "./src/lorebook.js";
+import {
+  getBackupHistory,
+  restoreBackup,
+  downloadBackup,
+  getBackupStorageUsage,
+  clearAllBackups,
+} from "./src/backup.js";
+import { openRewritePopup, openMainPopup, getPromptText } from "./src/ui.js";
+import { escapeHtml, escapeAttr } from "./src/utils.js";
 
-const MODULE_NAME = 'lorebook_manipulator';
+const MODULE_NAME = "lorebook_manipulator";
 
 const DEFAULT_SETTINGS = Object.freeze({
-    diffStyle: 'inline',
-    backupRetention: 5,
-    promptPreset: 'prune',
-    customPrompt: '',
-    maxTokens: 1024,
-    connectionProfileId: '',
+  diffStyle: "inline",
+  backupRetention: 5,
+  promptPreset: "prune",
+  customPrompt: "",
+  maxTokens: 1024,
+  reviewBatchBudget: 12000,
+  connectionProfileId: "",
 });
 
 let currentBookName = null;
 let currentEntries = [];
 
 jQuery(async () => {
-    const context = SillyTavern.getContext();
+  const context = SillyTavern.getContext();
 
-    const settingsHtml = await context.renderExtensionTemplateAsync(
-        'third-party/STLorebookManipulator',
-        'settings',
+  const settingsHtml = await context.renderExtensionTemplateAsync(
+    "third-party/STLorebookManipulator",
+    "settings",
+  );
+  $("#extensions_settings2").append(settingsHtml);
+
+  initSettings(context);
+  await populateLorebookSelector(context);
+  populateConnectionProfiles(context);
+
+  $("#lm_lorebook_select").on("change", async function () {
+    currentBookName = $(this).val();
+    if (currentBookName) {
+      await loadAndDisplayEntries(currentBookName, context);
+      renderBackupHistory(currentBookName, context);
+    } else {
+      $("#lm_entry_list_container").hide();
+      currentEntries = [];
+    }
+  });
+
+  $("#lm_entry_search").on("input", function () {
+    if (currentEntries.length > 0) {
+      renderEntryList(context);
+    }
+  });
+
+  $("#lm_connection_profile").on("change", function () {
+    getSettings(context).connectionProfileId = $(this).val();
+    context.saveSettingsDebounced();
+  });
+
+  $("#lm_diff_style").on("change", function () {
+    getSettings(context).diffStyle = $(this).val();
+    context.saveSettingsDebounced();
+  });
+
+  $("#lm_backup_retention").on("change", function () {
+    const val = parseInt($(this).val(), 10);
+    getSettings(context).backupRetention = Math.max(1, Math.min(50, val || 5));
+    context.saveSettingsDebounced();
+  });
+
+  $("#lm_prompt_preset").on("change", function () {
+    const preset = $(this).val();
+    getSettings(context).promptPreset = preset;
+    context.saveSettingsDebounced();
+    toggleCustomPrompt(preset);
+  });
+
+  $("#lm_custom_prompt").on("input", function () {
+    getSettings(context).customPrompt = $(this).val();
+    context.saveSettingsDebounced();
+  });
+
+  $("#lm_max_tokens").on("change", function () {
+    const val = parseInt($(this).val(), 10);
+    getSettings(context).maxTokens = Math.max(256, Math.min(8192, val || 1024));
+    context.saveSettingsDebounced();
+  });
+
+  $("#lm_review_batch_budget").on("change", function () {
+    const val = parseInt($(this).val(), 10);
+    getSettings(context).reviewBatchBudget = Math.max(
+      2000,
+      Math.min(100000, val || 12000),
     );
-    $('#extensions_settings2').append(settingsHtml);
+    context.saveSettingsDebounced();
+  });
 
-    initSettings(context);
-    await populateLorebookSelector(context);
-    populateConnectionProfiles(context);
-
-    $('#lm_lorebook_select').on('change', async function () {
-        currentBookName = $(this).val();
-        if (currentBookName) {
-            await loadAndDisplayEntries(currentBookName, context);
-            renderBackupHistory(currentBookName, context);
-        } else {
-            $('#lm_entry_list_container').hide();
-            currentEntries = [];
-        }
-    });
-
-    $('#lm_connection_profile').on('change', function () {
-        getSettings(context).connectionProfileId = $(this).val();
-        context.saveSettingsDebounced();
-    });
-
-    $('#lm_diff_style').on('change', function () {
-        getSettings(context).diffStyle = $(this).val();
-        context.saveSettingsDebounced();
-    });
-
-    $('#lm_backup_retention').on('change', function () {
-        const val = parseInt($(this).val(), 10);
-        getSettings(context).backupRetention = Math.max(1, Math.min(50, val || 5));
-        context.saveSettingsDebounced();
-    });
-
-    $('#lm_prompt_preset').on('change', function () {
-        const preset = $(this).val();
-        getSettings(context).promptPreset = preset;
-        context.saveSettingsDebounced();
-        toggleCustomPrompt(preset);
-    });
-
-    $('#lm_custom_prompt').on('input', function () {
-        getSettings(context).customPrompt = $(this).val();
-        context.saveSettingsDebounced();
-    });
-
-    $('#lm_max_tokens').on('change', function () {
-        const val = parseInt($(this).val(), 10);
-        getSettings(context).maxTokens = Math.max(256, Math.min(8192, val || 1024));
-        context.saveSettingsDebounced();
-    });
-
-    observeForQuickAccessButtons();
+  observeForQuickAccessButtons();
 });
 
 function getSettings(context) {
-    if (!context.extensionSettings[MODULE_NAME]) {
-        context.extensionSettings[MODULE_NAME] = structuredClone(DEFAULT_SETTINGS);
+  if (!context.extensionSettings[MODULE_NAME]) {
+    context.extensionSettings[MODULE_NAME] = structuredClone(DEFAULT_SETTINGS);
+  }
+  for (const key of Object.keys(DEFAULT_SETTINGS)) {
+    if (!Object.hasOwn(context.extensionSettings[MODULE_NAME], key)) {
+      context.extensionSettings[MODULE_NAME][key] = DEFAULT_SETTINGS[key];
     }
-    for (const key of Object.keys(DEFAULT_SETTINGS)) {
-        if (!Object.hasOwn(context.extensionSettings[MODULE_NAME], key)) {
-            context.extensionSettings[MODULE_NAME][key] = DEFAULT_SETTINGS[key];
-        }
-    }
-    return context.extensionSettings[MODULE_NAME];
+  }
+  return context.extensionSettings[MODULE_NAME];
 }
 
 function initSettings(context) {
-    const settings = getSettings(context);
+  const settings = getSettings(context);
 
-    $('#lm_diff_style').val(settings.diffStyle);
-    $('#lm_backup_retention').val(settings.backupRetention);
-    $('#lm_prompt_preset').val(settings.promptPreset);
-    $('#lm_custom_prompt').val(settings.customPrompt);
-    $('#lm_max_tokens').val(settings.maxTokens);
+  $("#lm_diff_style").val(settings.diffStyle);
+  $("#lm_backup_retention").val(settings.backupRetention);
+  $("#lm_prompt_preset").val(settings.promptPreset);
+  $("#lm_custom_prompt").val(settings.customPrompt);
+  $("#lm_max_tokens").val(settings.maxTokens);
+  $("#lm_review_batch_budget").val(settings.reviewBatchBudget);
 
-    toggleCustomPrompt(settings.promptPreset);
+  toggleCustomPrompt(settings.promptPreset);
 }
 
 // Populate the connection profile dropdown from SillyTavern's Connection
@@ -108,89 +131,124 @@ function initSettings(context) {
 // === ''). If the Connection Manager extension is unavailable, the dropdown is
 // left with just that default so the extension still works.
 function populateConnectionProfiles(context) {
-    const select = $('#lm_connection_profile');
-    const settings = getSettings(context);
+  const select = $("#lm_connection_profile");
+  const settings = getSettings(context);
 
-    const service = context.ConnectionManagerRequestService;
-    if (!service || typeof service.getSupportedProfiles !== 'function') {
-        // Connection Manager not available — keep just the "Active connection" default.
-        select.val('');
-        return;
-    }
+  const service = context.ConnectionManagerRequestService;
+  if (!service || typeof service.getSupportedProfiles !== "function") {
+    // Connection Manager not available — keep just the "Active connection" default.
+    select.val("");
+    return;
+  }
 
-    let profiles = [];
-    try {
-        profiles = service.getSupportedProfiles() || [];
-    } catch (e) {
-        console.warn('[LorebookManipulator] Could not list connection profiles:', e);
-        select.val('');
-        return;
-    }
+  let profiles = [];
+  try {
+    profiles = service.getSupportedProfiles() || [];
+  } catch (e) {
+    console.warn(
+      "[LorebookManipulator] Could not list connection profiles:",
+      e,
+    );
+    select.val("");
+    return;
+  }
 
-    // Rebuild options: keep the default, then one per supported profile.
-    select.find('option:not(:first)').remove();
-    for (const profile of profiles) {
-        select.append(`<option value="${escapeAttr(profile.id)}">${escapeHtml(profile.name || profile.id)}</option>`);
-    }
+  // Rebuild options: keep the default, then one per supported profile.
+  select.find("option:not(:first)").remove();
+  for (const profile of profiles) {
+    select.append(
+      `<option value="${escapeAttr(profile.id)}">${escapeHtml(profile.name || profile.id)}</option>`,
+    );
+  }
 
-    // Restore the saved selection if it still exists; otherwise fall back to default.
-    const saved = settings.connectionProfileId || '';
-    const stillExists = saved === '' || profiles.some((p) => p.id === saved);
-    if (!stillExists) {
-        settings.connectionProfileId = '';
-        context.saveSettingsDebounced();
-    }
-    select.val(settings.connectionProfileId || '');
+  // Restore the saved selection if it still exists; otherwise fall back to default.
+  const saved = settings.connectionProfileId || "";
+  const stillExists = saved === "" || profiles.some((p) => p.id === saved);
+  if (!stillExists) {
+    settings.connectionProfileId = "";
+    context.saveSettingsDebounced();
+  }
+  select.val(settings.connectionProfileId || "");
 }
 
 function toggleCustomPrompt(preset) {
-    if (preset === 'custom') {
-        $('#lm_custom_prompt_container').show();
-    } else {
-        $('#lm_custom_prompt_container').hide();
-    }
+  if (preset === "custom") {
+    $("#lm_custom_prompt_container").show();
+  } else {
+    $("#lm_custom_prompt_container").hide();
+  }
 }
 
 async function populateLorebookSelector(context) {
-    const names = getLorebookNames(context);
-    const select = $('#lm_lorebook_select');
-    select.empty().append('<option value="" disabled selected>-- Choose a lorebook --</option>');
+  const names = getLorebookNames(context);
+  const select = $("#lm_lorebook_select");
+  select
+    .empty()
+    .append(
+      '<option value="" disabled selected>-- Choose a lorebook --</option>',
+    );
 
-    for (const name of names) {
-        select.append(`<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`);
-    }
+  for (const name of names) {
+    select.append(
+      `<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`,
+    );
+  }
 }
 
 async function loadAndDisplayEntries(bookName, context) {
-    try {
-        currentEntries = await loadLorebook(bookName, context);
-        renderEntryList(context);
-        $('#lm_entry_list_container').show();
-    } catch (e) {
-        console.error('[LorebookManipulator] Failed to load entries:', e);
-        toastr.error(`Failed to load lorebook: ${e.message}`);
-        $('#lm_entry_list_container').hide();
-    }
+  try {
+    currentEntries = await loadLorebook(bookName, context);
+    renderEntryList(context);
+    $("#lm_entry_list_container").show();
+  } catch (e) {
+    console.error("[LorebookManipulator] Failed to load entries:", e);
+    toastr.error(`Failed to load lorebook: ${e.message}`);
+    $("#lm_entry_list_container").hide();
+  }
 }
 
 function renderEntryList(context) {
-    const container = $('#lm_entry_list');
-    container.empty();
+  const container = $("#lm_entry_list");
+  container.empty();
 
-    if (currentEntries.length === 0) {
-        container.html('<p class="lm-no-backups">No entries in this lorebook.</p>');
-        return;
-    }
+  const searchInput = document.getElementById("lm_entry_search");
+  const searchText = searchInput ? searchInput.value.toLowerCase().trim() : "";
 
-    const sortedEntries = [...currentEntries].sort((a, b) => (b.order ?? 0) - (a.order ?? 0));
+  const filteredEntries = searchText
+    ? currentEntries.filter((entry) => {
+        const name = (entry.comment || "").toLowerCase();
+        const keys = (entry.key || []).join(", ").toLowerCase();
+        const content = (entry.content || "").toLowerCase();
+        return (
+          name.includes(searchText) ||
+          keys.includes(searchText) ||
+          content.includes(searchText)
+        );
+      })
+    : currentEntries;
 
-    for (const entry of sortedEntries) {
-        const name = entry.comment || `Entry #${entry.uid}`;
-        const keys = (entry.key || []).join(', ') || '(no keys)';
-        const preview = (entry.content || '').substring(0, 80) + ((entry.content || '').length > 80 ? '...' : '');
-        const disabledClass = entry.disable ? ' disabled' : '';
+  if (filteredEntries.length === 0) {
+    container.html(
+      currentEntries.length === 0
+        ? '<p class="lm-no-backups">No entries in this lorebook.</p>'
+        : '<p class="lm-no-backups">No entries match your search.</p>',
+    );
+    return;
+  }
 
-        const item = $(`
+  const sortedEntries = [...filteredEntries].sort(
+    (a, b) => (b.order ?? 0) - (a.order ?? 0),
+  );
+
+  for (const entry of sortedEntries) {
+    const name = entry.comment || `Entry #${entry.uid}`;
+    const keys = (entry.key || []).join(", ") || "(no keys)";
+    const preview =
+      (entry.content || "").substring(0, 80) +
+      ((entry.content || "").length > 80 ? "..." : "");
+    const disabledClass = entry.disable ? " disabled" : "";
+
+    const item = $(`
             <div class="lm-entry-item${disabledClass}" data-uid="${entry.uid}">
                 <div class="lm-entry-name">${escapeHtml(name)}</div>
                 <div class="lm-entry-keys">${escapeHtml(keys)}</div>
@@ -198,29 +256,29 @@ function renderEntryList(context) {
             </div>
         `);
 
-        item.on('click', () => {
-            const settings = getSettings(context);
-            openRewritePopup(entry, currentBookName, settings, context);
-        });
+    item.on("click", () => {
+      const settings = getSettings(context);
+      openRewritePopup(entry, currentBookName, settings, context);
+    });
 
-        container.append(item);
-    }
+    container.append(item);
+  }
 }
 
 function renderBackupHistory(bookName, context) {
-    const container = $('#lm_backup_history');
-    const history = getBackupHistory(bookName);
+  const container = $("#lm_backup_history");
+  const history = getBackupHistory(bookName);
 
-    if (history.length === 0) {
-        container.html('<p class="lm-no-backups">No backups yet.</p>');
-        return;
-    }
+  if (history.length === 0) {
+    container.html('<p class="lm-no-backups">No backups yet.</p>');
+    return;
+  }
 
-    container.empty();
+  container.empty();
 
-    for (const backup of history) {
-        const date = new Date(backup.timestamp).toLocaleString();
-        const item = $(`
+  for (const backup of history) {
+    const date = new Date(backup.timestamp).toLocaleString();
+    const item = $(`
             <div class="lm-backup-item">
                 <span class="lm-backup-date">${escapeHtml(date)}</span>
                 <div class="lm-backup-actions">
@@ -230,90 +288,134 @@ function renderBackupHistory(bookName, context) {
             </div>
         `);
 
-        item.find('.lm-restore-btn').on('click', async () => {
-            try {
-                const confirmed = await context.Popup.show.confirm(
-                    'Restore Backup',
-                    `Restore lorebook "${bookName}" to the state from ${date}? This will overwrite current data.`,
-                );
-                if (!confirmed) return;
+    item.find(".lm-restore-btn").on("click", async () => {
+      try {
+        const confirmed = await context.Popup.show.confirm(
+          "Restore Backup",
+          `Restore lorebook "${bookName}" to the state from ${date}? This will overwrite current data.`,
+        );
+        if (!confirmed) return;
 
-                restoreBackup(
-                    bookName,
-                    backup.timestamp,
-                    (name, data) => context.saveWorldInfo(name, data),
-                    () => context.reloadWorldInfoEditor?.(),
-                );
+        restoreBackup(
+          bookName,
+          backup.timestamp,
+          (name, data) => context.saveWorldInfo(name, data),
+          () => context.reloadWorldInfoEditor?.(),
+        );
 
-                toastr.success('Backup restored successfully.');
-                await loadAndDisplayEntries(bookName, context);
-                renderBackupHistory(bookName, context);
-            } catch (e) {
-                console.error('[LorebookManipulator] Restore failed:', e);
-                toastr.error(`Restore failed: ${e.message}`);
-            }
-        });
+        toastr.success("Backup restored successfully.");
+        await loadAndDisplayEntries(bookName, context);
+        renderBackupHistory(bookName, context);
+      } catch (e) {
+        console.error("[LorebookManipulator] Restore failed:", e);
+        toastr.error(`Restore failed: ${e.message}`);
+      }
+    });
 
-        item.find('.lm-download-btn').on('click', () => {
-            try {
-                const filename = downloadBackup(bookName, backup.timestamp);
-                toastr.success(`Downloaded: ${filename}`);
-            } catch (e) {
-                console.error('[LorebookManipulator] Download failed:', e);
-                toastr.error(`Download failed: ${e.message}`);
-            }
-        });
+    item.find(".lm-download-btn").on("click", () => {
+      try {
+        const filename = downloadBackup(bookName, backup.timestamp);
+        toastr.success(`Downloaded: ${filename}`);
+      } catch (e) {
+        console.error("[LorebookManipulator] Download failed:", e);
+        toastr.error(`Download failed: ${e.message}`);
+      }
+    });
 
-        container.append(item);
+    container.append(item);
+  }
+
+  // Storage usage indicator
+  const usage = getBackupStorageUsage();
+  const statusClass = usage.isCritical
+    ? "lm-storage-critical"
+    : usage.isWarning
+      ? "lm-storage-warning"
+      : "lm-storage-ok";
+  const statusIcon = usage.isCritical ? "⚠️" : usage.isWarning ? "⚠️" : "💾";
+  const storageHtml = `<div class="lm-storage-indicator ${statusClass}">
+        <span class="lm-storage-label">${statusIcon} Storage:</span>
+        <span class="lm-storage-usage">${usage.formatted} used</span>
+        <span class="lm-storage-percent">(${usage.percentage}%)</span>
+        ${usage.isCritical ? '<span class="lm-storage-alert">— clear old backups!</span>' : ""}
+    </div>`;
+  container.append(storageHtml);
+
+  // Clear all backups button
+  const clearBtn =
+    $(`<button type="button" class="menu_button lm-clear-all-btn" style="margin-top: 10px;">
+        <i class="fa-solid fa-trash"></i> Clear All Backups
+    </button>`);
+  clearBtn.on("click", async () => {
+    try {
+      const confirmed = await context.Popup.show.confirm(
+        "Clear All Backups",
+        `Permanently delete ALL ${history.length} backups for "${bookName}"? This cannot be undone.`,
+      );
+      if (!confirmed) return;
+
+      clearAllBackups(bookName);
+      toastr.success(`All backups for "${bookName}" cleared.`);
+      renderBackupHistory(bookName, context);
+    } catch (e) {
+      console.error("[LorebookManipulator] Clear backups failed:", e);
+      toastr.error(`Failed to clear backups: ${e.message}`);
     }
+  });
+  container.append(clearBtn);
 }
 
 function injectQuickAccessButtons() {
-    const selectors = [
-        '.form_create_bottom_buttons_block',
-        '#GroupFavDelOkBack',
-        '#rm_buttons_container',
-        '#form_character_search_form',
-    ];
+  const selectors = [
+    ".form_create_bottom_buttons_block",
+    "#GroupFavDelOkBack",
+    "#rm_buttons_container",
+    "#form_character_search_form",
+  ];
 
-    selectors.forEach((selector) => {
-        const target = document.querySelector(selector);
-        if (!target) return;
-        if (target.querySelector('.lm-quick-access-icon')) return;
+  selectors.forEach((selector) => {
+    const target = document.querySelector(selector);
+    if (!target) return;
+    if (target.querySelector(".lm-quick-access-icon")) return;
 
-        const icon = document.createElement('div');
-        icon.className = 'menu_button fa-solid fa-book-open interactable lm-quick-access-icon';
-        icon.title = 'Lorebook Manipulator';
+    const icon = document.createElement("div");
+    icon.className =
+      "menu_button fa-solid fa-book-open interactable lm-quick-access-icon";
+    icon.title = "Lorebook Manipulator";
 
-        icon.addEventListener('click', () => {
-            const context = SillyTavern.getContext();
-            const settings = getSettings(context);
-            openMainPopup(settings, context);
-        });
-
-        target.prepend(icon);
+    icon.addEventListener("click", () => {
+      const context = SillyTavern.getContext();
+      const settings = getSettings(context);
+      populateConnectionProfiles(context);
+      openMainPopup(settings, context);
     });
+
+    target.prepend(icon);
+  });
 }
 
 function observeForQuickAccessButtons() {
+  injectQuickAccessButtons();
+
+  const observer = new MutationObserver(() => {
     injectQuickAccessButtons();
+  });
 
-    const observer = new MutationObserver(() => {
-        injectQuickAccessButtons();
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  const context = SillyTavern.getContext();
+  if (context?.eventSource && context?.eventTypes) {
+    const events = [
+      context.eventTypes.CHAT_CHANGED,
+      context.eventTypes.CHARACTER_SELECTED,
+      context.eventTypes.GROUP_SELECTED,
+      context.eventTypes.APP_READY,
+    ];
+    events.forEach((evt) => {
+      if (evt)
+        context.eventSource.on(evt, () =>
+          setTimeout(injectQuickAccessButtons, 200),
+        );
     });
-
-    observer.observe(document.body, { childList: true, subtree: true });
-
-    const context = SillyTavern.getContext();
-    if (context?.eventSource && context?.eventTypes) {
-        const events = [
-            context.eventTypes.CHAT_CHANGED,
-            context.eventTypes.CHARACTER_SELECTED,
-            context.eventTypes.GROUP_SELECTED,
-            context.eventTypes.APP_READY,
-        ];
-        events.forEach((evt) => {
-            if (evt) context.eventSource.on(evt, () => setTimeout(injectQuickAccessButtons, 200));
-        });
-    }
+  }
 }

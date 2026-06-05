@@ -9,18 +9,18 @@
 // Uses a pure string implementation (no DOM dependency) so it works
 // in both the browser and Node test environments.
 export function escapeHtml(text) {
-    return String(text ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+  return String(text ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 // Escape text for safe insertion into an HTML attribute value.
 // Only quotes need escaping in attribute contexts.
 export function escapeAttr(text) {
-    return String(text ?? '')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+  return String(text ?? "")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }

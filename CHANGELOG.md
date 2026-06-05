@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Review Batch Budget setting**: independent character budget for whole-book review batching (default 12000). Previously shared `maxTokens`; now configurable via Settings panel under "Review Batch Budget (chars)". Large books can use a higher budget to reduce missed cross-batch duplicates.
+- **Storage usage indicator**: backup history panel now shows a color-coded storage indicator (green/yellow/red) with percentage of localStorage used. Shows a warning at >70% and critical alert at >90%.
+- **Clear All Backups button**: new button at bottom of backup history to delete all backups for the current lorebook with confirmation dialog.
+- **Search/filter entries**: search input above entry list in both popup and settings drawer to filter by name, keys, or content.
+- **Title/key change preview**: when saving an entry with changed title, primary keys, or secondary keys, a confirmation dialog shows before/after values before saving.
+- **FIXED cascade marking**: when you fix an issue that affects an entry, other unresolved issues referencing the same entry are automatically marked FIXED.
+
+### Changed
+- **Connection profile dropdown refreshes on popup open**: quick-access button now calls `populateConnectionProfiles()` before opening popup, so newly created/renamed profiles appear without page reload.
+- **Removed unused `prompts/rewrite.hbs` template**: the rewrite prompt was already hardcoded in `llm.js`; the template file added confusion.
+- **Formatted all JS files with Prettier**: consistent code style across all 19 JS files.
+
 ## [0.7.0] - 2026-06-01
 
 ### Added

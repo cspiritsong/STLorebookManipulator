@@ -17,6 +17,7 @@
                 <label>
                     <span data-i18n="Entries">Entries</span>
                 </label>
+                <input id="lm_entry_search" type="text" class="text_pole" placeholder="Search entries by name, keys, or content..." style="margin-bottom: 8px;" />
                 <div id="lm_entry_list" class="lm-entry-list"></div>
             </div>
 
@@ -65,6 +66,12 @@
                 <span data-i18n="Max Response Tokens">Max Response Tokens</span>
             </label>
             <input id="lm_max_tokens" type="number" min="256" max="8192" step="256" class="text_pole" value="1024" />
+
+            <label for="lm_review_batch_budget">
+                <span data-i18n="Review Batch Budget">Review Batch Budget (chars)</span>
+            </label>
+            <input id="lm_review_batch_budget" type="number" min="2000" max="100000" step="1000" class="text_pole" value="12000" />
+            <small class="lm-field-hint">Character budget per batch when reviewing large lorebooks. Increase to reduce missed cross-batch duplicates. Default: 12000.</small>
 
             <hr />
 

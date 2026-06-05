@@ -553,3 +553,89 @@
     font-size: 0.85em;
     color: #ff8a8a;
 }
+
+.lm-storage-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    margin-top: 10px;
+    border-radius: 4px;
+    font-size: 0.85em;
+    background: var(--SmartThemeBotMesBlurTintColor, rgba(0, 0, 0, 0.2));
+}
+
+.lm-storage-ok {
+    border-left: 3px solid var(--SmartThemeColor, #5cf4a0);
+}
+
+.lm-storage-warning {
+    border-left: 3px solid #f0c74a;
+    background: rgba(240, 199, 74, 0.1);
+}
+
+.lm-storage-critical {
+    border-left: 3px solid #ff6b6b;
+    background: rgba(255, 107, 107, 0.1);
+    color: #ff9999;
+}
+
+.lm-storage-label {
+    font-weight: bold;
+}
+
+.lm-storage-usage {
+    color: var(--SmartThemeSubtleColor, #aaa);
+}
+
+.lm-storage-percent {
+    color: var(--SmartThemeSubtleColor, #aaa);
+}
+
+.lm-storage-alert {
+    color: #ff9999;
+    font-weight: bold;
+}
+
+.lm-field-change {
+    margin-bottom: 8px;
+    padding: 8px;
+    background: var(--SmartThemeBotMesBlurTintColor, rgba(0, 0, 0, 0.3));
+    border-radius: 4px;
+    border-left: 3px solid #f0c74a;
+}
+
+.lm-field-change-name {
+    font-weight: bold;
+    margin-bottom: 4px;
+    color: var(--SmartThemeColor, #5cf4a0);
+}
+
+.lm-field-change-before,
+.lm-field-change-after {
+    font-size: 0.9em;
+    margin: 2px 0;
+    word-break: break-word;
+}
+
+.lm-field-change-before {
+    color: var(--SmartThemeSubtleColor, #aaa);
+    text-decoration: line-through;
+}
+
+.lm-field-change-after {
+    color: #98c379;
+}
+
+.lm-clear-all-btn {
+    display: block;
+    width: 100%;
+    margin-top: 10px;
+    color: #ff9999;
+    border-color: #ff6b6b;
+}
+
+.lm-clear-all-btn:hover {
+    background: rgba(255, 107, 107, 0.2);
+    color: #ff6b6b;
+}

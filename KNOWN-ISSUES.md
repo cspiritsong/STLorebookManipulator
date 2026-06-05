@@ -6,18 +6,18 @@
 - **What**: The before/after diff preview only covers the **content** field (when you click Generate Suggestion). Edits to title, primary keys, or secondary keys are applied directly on Save with no diff.
 - **Impact**: Minor. Field edits are small and visible in the input boxes. A pre-delete/pre-save backup still protects against mistakes.
 - **Workaround**: Restore from Backup History if a field edit was wrong.
-- **Fix planned**: Could add a simple field-level before/after summary on Save if requested.
+- **Fix planned**: ~~Could add a simple field-level before/after summary on Save if requested.~~ **Implemented** — a confirmation dialog now shows before/after previews for changed Title/Primary Keys/Secondary Keys when you click Save.
 
 ### Connection Profile Dropdown Is Populated Once at Load
 - **What**: The Connection Profile dropdown is filled when the extension initializes. Profiles created/renamed/deleted in the Connection Manager *after* that are not reflected until SillyTavern is reloaded.
 - **Impact**: Minor. A newly created profile won't appear in the dropdown until reload. If a selected profile is deleted, the next request through it errors with a clear message and the setting falls back to "Active connection" on the following load.
-- **Workaround**: Reload the page after changing your connection profiles.
-- **Fix planned**: A future release could subscribe to `CONNECTION_PROFILE_CREATED/UPDATED/DELETED` events (or use `ConnectionManagerRequestService.handleDropdown`) to keep the list live.
+- **Workaround**: Reload the page after changing your connection profiles. The quick-access button also refreshes the dropdown on each click.
+- **Fix planned**: A future release could subscribe to `CONNECTION_PROFILE_CREATED/UPDATED/DELETED` events (or use `ConnectionManagerRequestService.handleDropdown`) to keep the list live. The quick-access button already calls `populateConnectionProfiles()` on open.
 
 ### Whole-Book Review Cannot Detect Cross-Batch Issues
 - **What**: Large lorebooks are split into batches so each request fits the model's context window. The model only sees one batch at a time, so an issue spanning two batches (e.g. duplicate entries that land in different batches) will not be detected.
 - **Impact**: On very large books, some duplicates/overlaps may be missed. Most personal lorebooks fit in a single batch and are unaffected.
-- **Workaround**: Increase Max Tokens, or review subsets of the book. For now the batch budget (12000 chars) is generous enough that most books are one batch.
+- **Workaround**: Increase the Review Batch Budget setting (default 12000 chars) to keep more entries per batch, or review subsets of the book.
 - **Fix planned**: A future "second pass" could re-check flagged candidates across batches, or send entry summaries first.
 
 ### LLM May Not Produce Valid Structured Output On Weak Models
@@ -29,8 +29,8 @@
 ### localStorage Size Limits Not Monitored
 - **What**: Backups are stored in localStorage, which typically has a 5-10MB limit per origin. Large lorebooks with many backup entries could approach this limit silently.
 - **Impact**: Backup creation may fail (a visible error is shown via toast), blocking the apply.
-- **Workaround**: Reduce backup retention count in settings. Manually clear old backups.
-- **Fix planned**: A future release will add a storage usage indicator and graceful degradation (skip oldest backup when full).
+- **Workaround**: Reduce backup retention count in settings. The backup history panel now shows a storage usage indicator (green/yellow/red) so you can see when you're approaching the limit.
+- **Fix planned**: ~~A future release will add a storage usage indicator and graceful degradation (skip oldest backup when full).~~ **Storage indicator implemented** — shows usage percentage with color-coded warnings (>70% yellow, >90% red). Graceful degradation on full storage still pending.
 
 ### Diff Algorithm Is Word-Level Only
 - **What**: The custom diff operates on whitespace-delimited words. It does not handle intra-word changes, punctuation-only changes, or reordering gracefully.
