@@ -75,6 +75,15 @@ export async function openMainPopup(settings, context) {
 
         <div id="lm_popup_settings" class="lm-popup-settings" style="display:none; margin-top:15px;">
             <hr />
+            <label for="lm_popup_connection_profile">Connection Profile</label>
+            <select id="lm_popup_connection_profile" class="text_pole">
+                <option value="">Active connection (default)</option>
+            </select>
+            <small class="lm-field-hint">Which connection to use for rewriting and review. Leave on "Active connection" to use whatever your chat is currently using.</small>
+
+            <label for="lm_popup_max_tokens">Max Response Tokens</label>
+            <input id="lm_popup_max_tokens" type="number" min="256" max="8192" step="256" class="text_pole" value="${settings.maxTokens || 1024}" />
+
             <label for="lm_popup_review_budget">Review Batch Budget (chars)</label>
             <input id="lm_popup_review_budget" type="number" min="2000" max="100000" step="1000" class="text_pole" value="${settings.reviewBatchBudget || 12000}" />
             <small class="lm-field-hint">Character budget per batch for whole-book review. Increase to reduce missed cross-batch duplicates.</small>
@@ -112,10 +121,56 @@ export async function openMainPopup(settings, context) {
   const reviewStatus = container.querySelector("#lm_review_status");
   const issueListEl = container.querySelector("#lm_issue_list");
   const settingsSection = container.querySelector("#lm_popup_settings");
+  const connectionProfileSelect = container.querySelector("#lm_popup_connection_profile");
+  const maxTokensInput = container.querySelector("#lm_popup_max_tokens");
   const reviewBudgetInput = container.querySelector("#lm_popup_review_budget");
   const backupSection = container.querySelector("#lm_popup_backup_section");
   const backupHistoryEl = container.querySelector("#lm_popup_backup_history");
   const clearBackupsBtn = container.querySelector("#lm_popup_clear_backups");
+
+  // Populate connection profile dropdown
+  async function populatePopupConnectionProfiles() {
+    if (!connectionProfileSelect) return;
+    const service = context.ConnectionManagerRequestService;
+    if (!service || typeof service.getSupportedProfiles !== "function") return;
+
+    let profiles = [];
+    try {
+      profiles = service.getSupportedProfiles() || [];
+    } catch (e) {
+      console.warn("[LorebookManipulator] Could not list connection profiles:", e);
+      return;
+    }
+
+    // Clear existing options except the first one
+    connectionProfileSelect.querySelectorAll("option:not(:first-child)").forEach(opt => opt.remove());
+
+    for (const profile of profiles) {
+      const opt = document.createElement("option");
+      opt.value = profile.id;
+      opt.textContent = profile.name || profile.id;
+      connectionProfileSelect.appendChild(opt);
+    }
+
+    // Restore saved selection
+    connectionProfileSelect.value = settings.connectionProfileId || "";
+  }
+
+  // Initialize connection profiles on popup open
+  populatePopupConnectionProfiles();
+
+  // Wire up Connection Profile select
+  connectionProfileSelect?.addEventListener("change", () => {
+    settings.connectionProfileId = connectionProfileSelect.value;
+    context.saveSettingsDebounced();
+  });
+
+  // Wire up Max Response Tokens input
+  maxTokensInput?.addEventListener("change", () => {
+    const val = parseInt(maxTokensInput.value, 10);
+    settings.maxTokens = Math.max(256, Math.min(8192, val || 1024));
+    context.saveSettingsDebounced();
+  });
 
   // Wire up Review Batch Budget input
   reviewBudgetInput?.addEventListener("change", () => {
