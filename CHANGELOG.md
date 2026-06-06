@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Search/filter entries**: search input above entry list in both popup and settings drawer to filter by name, keys, or content.
 - **Title/key change preview**: when saving an entry with changed title, primary keys, or secondary keys, a confirmation dialog shows before/after values before saving.
 - **FIXED cascade marking**: when you fix an issue that affects an entry, other unresolved issues referencing the same entry are automatically marked FIXED.
+- **Popup is now self-contained**: Review Batch Budget, backup history with storage indicator, and Clear All Backups are all visible in the popup (no need to access settings drawer).
 
 ### Changed
 - **Connection profile dropdown refreshes on popup open**: quick-access button now calls `populateConnectionProfiles()` before opening popup, so newly created/renamed profiles appear without page reload.
