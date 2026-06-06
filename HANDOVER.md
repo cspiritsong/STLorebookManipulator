@@ -104,7 +104,7 @@ We benchmarked against the [World Info Recommender](https://github.com/bmen25124
 - [x] Edit keys/triggers/title (not just content)
 - [x] Delete entries
 - [x] Multi-lorebook view (one book at a time currently)
-- [ ] Apply All for review fixes (bulk apply across issues)
+- [x] **Apply All** for review fixes (bulk apply across issues) — *Implemented in unreleased*
 - [x] Connection profile selection
 
 **Bucket B — power-user / automation**

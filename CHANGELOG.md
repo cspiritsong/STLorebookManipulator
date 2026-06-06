@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Apply All Fixes button**: after a whole-book review, you can now apply all recommended fixes in one click. The bulk operation creates a single backup, then processes each issue (single-entry rewrites and multi-entry resolve plans) sequentially, handling errors gracefully and showing progress. At the end, all successfully applied issues are automatically marked FIXED, with cascade marking for any other issues referencing the same entries.
+
 ## [0.8.0] - 2026-06-06
 
 ### Added

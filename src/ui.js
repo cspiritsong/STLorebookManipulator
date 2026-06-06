@@ -415,6 +415,123 @@ export async function openMainPopup(settings, context) {
     return btn;
   }
 
+  // Apply fixes for all unresolved issues in bulk.
+  async function applyAllFixes(allIssues, reviewData, statusEl) {
+    // Find issues not yet fixed
+    const unresolved = allIssues.filter((issue) => !sessionCache.fixedIssues.has(issue));
+    if (unresolved.length === 0) {
+      toastr.info("All issues are already fixed.");
+      return;
+    }
+
+    // Confirm before making sweeping changes
+    const confirmed = await context.Popup.show.confirm(
+      "Apply All Fixes",
+      `Apply fixes for ${unresolved.length} issue(s)? Each will be rewritten or deleted according to the review's recommendations.\n\nA backup of the current book will be created before any changes.`,
+    );
+    if (!confirmed) return;
+
+    showStatus(statusEl, `Applying fixes for ${unresolved.length} issues...`, "loading");
+
+    // Create one backup up-front
+    const bookData = await context.loadWorldInfo(currentBookName);
+    createBackup(currentBookName, bookData, settings.backupRetention);
+
+    let successCount = 0;
+    let failCount = 0;
+    const newFixed = new Set(sessionCache.fixedIssues); // start with already-fixed
+
+    const instructions = sessionCache.instructions || "";
+
+    // Process each unresolved issue
+    for (let i = 0; i < unresolved.length; i++) {
+      const issue = unresolved[i];
+      showStatus(statusEl, `Applying fix ${i + 1}/${unresolved.length}: ${issue.description || "issue"}...`, "loading");
+      
+      try {
+        if (issue.entries.length === 1) {
+          // Single-entry fix: rewrite content
+          const entryUid = issue.entries[0].uid;
+          const entryObj = currentEntries.find((e) => e.uid === entryUid);
+          if (!entryObj) {
+            console.warn(`[ApplyAll] Entry ${entryUid} not found, skipping`);
+            continue;
+          }
+
+          const rewrite = await generateRewrite(entryObj, instructions, settings, context);
+          await updateEntryFields(currentBookName, entryUid, { content: rewrite.rewrittenContent }, context);
+        } else {
+          // Multi-entry fix: create a plan and apply all actions
+          // Resolve which entries from currentEntries are actually affected
+          const affectedEntries = issue.entries
+            .map((e) => currentEntries.find((en) => en.uid === e.uid))
+            .filter(Boolean);
+
+          if (affectedEntries.length === 0) {
+            console.warn(`[ApplyAll] No valid affected entries for issue, skipping`);
+            continue;
+          }
+
+          const plan = await resolveIssue(issue, affectedEntries, settings.maxTokens, context, settings.connectionProfileId || null);
+          if (!plan.actions || plan.actions.length === 0) {
+            console.warn(`[ApplyAll] Resolve produced no actions for issue, skipping`);
+            continue;
+          }
+
+          // Apply rewrites first, then deletes
+          const rewrites = plan.actions.filter((a) => a.action === "rewrite");
+          const deletes = plan.actions.filter((a) => a.action === "delete");
+
+          for (const a of rewrites) {
+            await updateEntryFields(currentBookName, a.uid, { content: a.newContent }, context);
+          }
+          for (const a of deletes) {
+            await deleteEntry(currentBookName, a.uid, context);
+          }
+        }
+
+        // Mark this issue as fixed (cascade computation later)
+        newFixed.add(issue);
+        successCount++;
+      } catch (e) {
+        console.error("[LorebookManipulator] ApplyAll failed for issue:", issue.description, e);
+        failCount++;
+      }
+    }
+
+    // Compute cascade: any other issue that shares a uid with a now-fixed issue becomes fixed too.
+    const finalFixed = new Set(newFixed);
+    for (const issue of allIssues) {
+      if (finalFixed.has(issue)) continue;
+      const uids = issue.entries.map((e) => e.uid).filter((uid) => uid !== null);
+      if (uids.some((uid) => {
+        for (const fixedIssue of finalFixed) {
+          if (fixedIssue.entries.some((fe) => fe.uid === uid)) return true;
+        }
+        return false;
+      })) {
+        finalFixed.add(issue);
+      }
+    }
+
+    sessionCache.fixedIssues = finalFixed;
+
+    // Refresh the UI
+    showReview(reviewData);
+    await loadAndRender(currentBookName);
+
+    // Final status
+    const msg = failCount > 0
+      ? `Applied ${successCount} fix(es), ${failCount} failed.`
+      : `Successfully applied all ${successCount} fixes!`;
+    showStatus(statusEl, msg, failCount > 0 ? "error" : "success");
+    if (failCount === 0) {
+      toastr.success(msg);
+    } else {
+      toastr.warning(msg);
+    }
+  }
+
   // Confirm, back up, delete, then refresh the list in place.
   async function handleDeleteEntry(entry, bookName) {
     const title = entry.comment || `Entry #${entry.uid}`;
@@ -508,35 +625,54 @@ export async function openMainPopup(settings, context) {
       loadAndRender(currentBookName);
     };
 
-    renderIssueList(
-      issueListEl,
-      issues,
-      currentEntries,
-      sessionCache.fixedIssues,
-      (entry, issue) => {
-        // Single-entry issue → open the editor on top; on success mark fixed.
-        openRewritePopup(
-          entry,
-          currentBookName,
-          settings,
-          context,
-          issue,
-          null,
-          () => markFixed(issue),
-        );
-      },
-      (issue, affectedEntries) => {
-        // Multi-entry issue → open the cross-entry resolve flow.
-        openResolvePopup(
-          issue,
-          affectedEntries,
-          currentBookName,
-          settings,
-          context,
-          () => markFixed(issue),
-        );
-      },
-    );
+     renderIssueList(
+       issueListEl,
+       issues,
+       currentEntries,
+       sessionCache.fixedIssues,
+       (entry, issue) => {
+         // Single-entry issue → open the editor on top; on success mark fixed.
+         openRewritePopup(
+           entry,
+           currentBookName,
+           settings,
+           context,
+           issue,
+           null,
+           () => markFixed(issue),
+         );
+       },
+       (issue, affectedEntries) => {
+         // Multi-entry issue → open the cross-entry resolve flow.
+         openResolvePopup(
+           issue,
+           affectedEntries,
+           currentBookName,
+           settings,
+           context,
+           () => markFixed(issue),
+         );
+       },
+     );
+
+    // Add "Apply All Fixes" button for bulk resolution
+    const oldBtn = issueListEl.querySelector(".lm-apply-all-btn");
+    oldBtn?.remove();
+
+    const applyAllBtn = document.createElement("button");
+    applyAllBtn.type = "button";
+    applyAllBtn.className = "menu_button lm-apply-all-btn";
+    applyAllBtn.innerHTML = '<i class="fa-solid fa-broom"></i> Apply All Fixes';
+    applyAllBtn.style.marginTop = "10px";
+    applyAllBtn.addEventListener("click", async () => {
+      applyAllBtn.disabled = true;
+      try {
+        await applyAllFixes(issues, reviewData, reviewStatus);
+      } finally {
+        applyAllBtn.disabled = false;
+      }
+    });
+    issueListEl.appendChild(applyAllBtn);
   }
 
   reviewBtn?.addEventListener("click", async () => {
