@@ -7,7 +7,7 @@
     "js": "index.js",
     "css": "style.css",
     "author": "STLorebookManipulator Contributors",
-    "version": "0.7.0",
+    "version": "0.8.0",
     "homePage": "https://github.com/cspiritsong/STLorebookManipulator",
     "auto_update": true,
     "minimum_client_version": "1.12.0"
