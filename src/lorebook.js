@@ -161,6 +161,68 @@ export async function updateEntryContent(bookName, uid, newContent, context) {
   return updateEntryFields(bookName, uid, { content: newContent }, context);
 }
 
+// Create a new entry in a lorebook. Returns the new entry's UID.
+export async function createEntry(bookName, fields, context) {
+  if (!bookName) throw new Error("No lorebook name provided.");
+
+  if (
+    !context ||
+    typeof context.loadWorldInfo !== "function" ||
+    typeof context.saveWorldInfo !== "function"
+  ) {
+    throw new Error("Required SillyTavern API functions are not available.");
+  }
+
+  const clean = sanitizeEntryFields(fields);
+
+  try {
+    const data = await context.loadWorldInfo(bookName);
+
+    if (!data) {
+      throw new Error(`Lorebook "${bookName}" not found.`);
+    }
+
+    if (!data.entries) {
+      data.entries = {};
+    }
+
+    // Find the next available UID
+    const existingUids = Object.values(data.entries).map((e) => e.uid || 0);
+    const nextUid = existingUids.length > 0 ? Math.max(...existingUids) + 1 : 1;
+
+    // Build the new entry with sensible defaults for structural fields
+    const newEntry = {
+      uid: nextUid,
+      key: clean.key || [],
+      keysecondary: clean.keysecondary || [],
+      comment: clean.comment || "",
+      content: clean.content || "",
+      order: 100,
+      position: 1,
+      disable: false,
+      constant: false,
+      selective: false,
+    };
+
+    // Store under a string key (ST convention)
+    data.entries[String(nextUid)] = newEntry;
+
+    await context.saveWorldInfo(bookName, data);
+
+    if (typeof context.reloadWorldInfoEditor === "function") {
+      context.reloadWorldInfoEditor();
+    }
+
+    return nextUid;
+  } catch (e) {
+    console.error(
+      `[LorebookManipulator] Failed to create entry in "${bookName}":`,
+      e,
+    );
+    throw new Error(`Failed to create entry: ${e.message}`);
+  }
+}
+
 // Permanently delete an entry from a lorebook. Caller is responsible for
 // creating a backup first (the UI does this) so the deletion is recoverable.
 export async function deleteEntry(bookName, uid, context) {

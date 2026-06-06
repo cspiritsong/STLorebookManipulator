@@ -4,6 +4,7 @@ import {
   updateEntryFields,
   updateEntryContent,
   deleteEntry,
+  createEntry,
 } from "../src/lorebook.js";
 
 let passed = 0;
@@ -236,6 +237,65 @@ await (async () => {
   await assertRejects(
     deleteEntry("Book", 999, ctx),
     "deleteEntry rejects unknown uid",
+  );
+})();
+
+console.log("\n=== createEntry Tests ===\n");
+
+await (async () => {
+  const ctx = makeMockContext([
+    { uid: 1, comment: "Existing", content: "a", key: ["k"], keysecondary: [] },
+  ]);
+
+  const newUid = await createEntry("Book", {
+    comment: "New Dragon",
+    content: "Dragon lore content",
+    key: ["dragon", "wyrm"],
+    keysecondary: ["creature"],
+  }, ctx);
+
+  assert(
+    newUid === 2,
+    "createEntry returns next uid (max existing + 1)",
+  );
+  assert(
+    ctx._store.entries["2"] !== undefined,
+    "createEntry adds new entry to the store",
+  );
+  assert(
+    ctx._store.entries["2"].comment === "New Dragon",
+    "createEntry sets the title",
+  );
+  assert(
+    ctx._store.entries["2"].content === "Dragon lore content",
+    "createEntry sets the content",
+  );
+  assert(
+    JSON.stringify(ctx._store.entries["2"].key) === JSON.stringify(["dragon", "wyrm"]),
+    "createEntry sets the primary keys",
+  );
+  assert(
+    JSON.stringify(ctx._store.entries["2"].keysecondary) === JSON.stringify(["creature"]),
+    "createEntry sets the secondary keys",
+  );
+  assert(
+    ctx._store.entries["1"] !== undefined,
+    "createEntry preserves existing entries",
+  );
+  assert(ctx.calls.saved === 1, "createEntry saves once");
+  assert(ctx.calls.reloaded === 1, "createEntry reloads editor");
+
+  // Create in empty book
+  const ctx2 = makeMockContext([]);
+  const firstUid = await createEntry("Book", {
+    comment: "First",
+    content: "First entry",
+    key: [],
+    keysecondary: [],
+  }, ctx2);
+  assert(
+    firstUid === 1,
+    "createEntry starts at uid 1 for empty lorebook",
   );
 })();
 

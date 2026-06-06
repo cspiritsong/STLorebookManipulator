@@ -4,6 +4,7 @@ import { createBackup } from "./backup.js";
 import {
   updateEntryFields,
   deleteEntry,
+  createEntry,
   getLorebookNames,
   loadLorebook,
   parseKeywordString,
@@ -120,6 +121,9 @@ export async function openMainPopup(settings, context) {
             </div>
 
             <div id="lm_popup_entry_list" class="lm-entry-list" style="display:none; margin-top:10px;">
+                <button type="button" id="lm_popup_create_entry" class="menu_button menu_button_icon" style="margin-bottom: 8px;">
+                    <i class="fa-solid fa-plus"></i> Create New Entry
+                </button>
                 <input id="lm_entry_search" type="text" class="text_pole" placeholder="Search entries by name, keys, or content..." style="margin-bottom: 8px;" />
             </div>
         </div>
@@ -247,6 +251,18 @@ export async function openMainPopup(settings, context) {
     } catch (e) {
       console.error("[LorebookManipulator] Clear backups failed:", e);
       toastr.error(`Failed to clear backups: ${e.message}`);
+    }
+  });
+
+  // Wire up Create New Entry button
+  const createEntryBtn = container.querySelector("#lm_popup_create_entry");
+  createEntryBtn?.addEventListener("click", async () => {
+    if (!currentBookName) return;
+    try {
+      openCreateEntryPopup(currentBookName, settings, context, loadAndRender);
+    } catch (e) {
+      console.error("[LorebookManipulator] Create entry failed:", e);
+      toastr.error(`Failed to create entry: ${e.message}`);
     }
   });
 
@@ -1102,6 +1118,80 @@ export async function openResolvePopup(
   cancelBtn?.addEventListener("click", () => {
     popup.completeCancelled();
   });
+}
+
+// Open a popup to create a new lorebook entry. On success, the entry list is refreshed.
+export async function openCreateEntryPopup(bookName, settings, context, onRefresh) {
+  const { Popup, POPUP_TYPE } = context;
+
+  const popupHtml = `<div class="lm-create-entry-popup">
+    <h3>Create New Entry</h3>
+    <label for="lm_ce_title">Title</label>
+    <input id="lm_ce_title" type="text" class="text_pole" placeholder="Entry name (e.g. 'Dragon Lore')" />
+
+    <label for="lm_ce_keys">Primary Keys <small>(comma-separated)</small></label>
+    <input id="lm_ce_keys" type="text" class="text_pole" placeholder="dragon, wyrm, fire" />
+
+    <label for="lm_ce_secondary_keys">Secondary Keys <small>(comma-separated, optional)</small></label>
+    <input id="lm_ce_secondary_keys" type="text" class="text_pole" placeholder="creature, beast" />
+
+    <label for="lm_ce_content">Content</label>
+    <textarea id="lm_ce_content" class="text_pole" rows="8" placeholder="The lore text for this entry..."></textarea>
+  </div>`;
+
+  const popup = new Popup(popupHtml, POPUP_TYPE.TEXT, "", {
+    wide: false,
+    large: false,
+    okButton: "Create",
+    cancelButton: "Cancel",
+    allowVerticalScrolling: true,
+  });
+
+  popup.show();
+
+  const container = document.querySelector(".lm-create-entry-popup");
+  if (!container) return;
+
+  const titleInput = container.querySelector("#lm_ce_title");
+  const keysInput = container.querySelector("#lm_ce_keys");
+  const secondaryKeysInput = container.querySelector("#lm_ce_secondary_keys");
+  const contentInput = container.querySelector("#lm_ce_content");
+
+  // Focus the title field
+  setTimeout(() => titleInput?.focus(), 100);
+
+  // Wait for the user to confirm or cancel
+  const result = await popup.result;
+  if (result === undefined || result === null || result === false) return;
+
+  const title = titleInput?.value?.trim() || "";
+  const keys = parseKeywordString(keysInput?.value || "");
+  const secondaryKeys = parseKeywordString(secondaryKeysInput?.value || "");
+  const content = contentInput?.value || "";
+
+  if (!content.trim()) {
+    toastr.warning("Content cannot be empty.");
+    return;
+  }
+
+  try {
+    // Create backup before modifying
+    const bookData = await context.loadWorldInfo(bookName);
+    createBackup(bookName, bookData, settings.backupRetention);
+
+    const newUid = await createEntry(bookName, {
+      comment: title,
+      key: keys,
+      keysecondary: secondaryKeys,
+      content: content,
+    }, context);
+
+    toastr.success(`Entry created (UID ${newUid}).`);
+    if (typeof onRefresh === "function") onRefresh(bookName);
+  } catch (e) {
+    console.error("[LorebookManipulator] Create entry failed:", e);
+    toastr.error(`Failed to create entry: ${e.message}`);
+  }
 }
 
 // Render the resolution plan: one row per action with a checkbox. Rewrites
