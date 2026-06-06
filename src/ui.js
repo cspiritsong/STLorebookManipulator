@@ -384,20 +384,21 @@ export async function openMainPopup(settings, context) {
     renderPopupBackupHistory(bookName);
 
     if (entries.length === 0) {
-      // Clear and re-attach search input even when no entries
+      // Clear and re-attach UI controls even when no entries
       const savedSearch = searchInput ? searchInput.value : "";
-      entryListEl.innerHTML =
-        '<p class="lm-no-backups">No entries in this lorebook.</p>';
+      entryListEl.innerHTML = '<p class="lm-no-backups">No entries in this lorebook.</p>';
+      if (createEntryBtn) entryListEl.insertBefore(createEntryBtn, entryListEl.firstChild);
       if (searchInput) {
-        entryListEl.insertBefore(searchInput, entryListEl.firstChild);
+        entryListEl.insertBefore(searchInput, createEntryBtn ? createEntryBtn.nextSibling : entryListEl.firstChild);
         searchInput.value = savedSearch;
       }
       return;
     }
 
-    // Preserve the search input when re-rendering
+    // Preserve UI controls when re-rendering
     const savedSearch = searchInput ? searchInput.value : "";
     entryListEl.innerHTML = "";
+    if (createEntryBtn) entryListEl.appendChild(createEntryBtn);
     if (searchInput) {
       entryListEl.appendChild(searchInput);
       searchInput.value = savedSearch;
