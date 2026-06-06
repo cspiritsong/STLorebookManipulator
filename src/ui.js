@@ -53,49 +53,52 @@ export async function openMainPopup(settings, context) {
     optionsHtml += `<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`;
   }
 
-  const popupHtml = `<div class="lm-main-popup">
-        <h3>Lorebook Manipulator</h3>
-        <label for="lm_popup_book_select">Select Lorebook</label>
-        <select id="lm_popup_book_select" class="text_pole">${optionsHtml}</select>
+  const popupHtml = `<div class="lm-main-popup lm-popup-layout">
+        <div class="lm-popup-main">
+            <h3>Lorebook Manipulator</h3>
+            <label for="lm_popup_book_select">Select Lorebook</label>
+            <select id="lm_popup_book_select" class="text_pole">${optionsHtml}</select>
 
-        <div id="lm_review_section" class="lm-review-section" style="display:none;">
-            <label for="lm_review_instructions">Review the whole book</label>
-            <textarea id="lm_review_instructions" class="text_pole textarea_compact" rows="2"
-                placeholder="Optional: tell the AI what to focus on (e.g. 'find duplicate lore' or 'flag contradictions'). Leave blank for a general review."></textarea>
-            <button type="button" id="lm_review_btn" class="menu_button menu_button_icon">
-                <i class="fa-solid fa-magnifying-glass"></i> Review &amp; Recommend Fixes
-            </button>
-            <div id="lm_review_status" class="lm-status"></div>
-            <div id="lm_issue_list" class="lm-issue-list"></div>
+            <div id="lm_review_section" class="lm-review-section" style="display:none;">
+                <label for="lm_review_instructions">Review the whole book</label>
+                <textarea id="lm_review_instructions" class="text_pole textarea_compact" rows="2"
+                    placeholder="Optional: tell the AI what to focus on (e.g. 'find duplicate lore' or 'flag contradictions'). Leave blank for a general review."></textarea>
+                <button type="button" id="lm_review_btn" class="menu_button menu_button_icon">
+                    <i class="fa-solid fa-magnifying-glass"></i> Review &amp; Recommend Fixes
+                </button>
+                <div id="lm_review_status" class="lm-status"></div>
+                <div id="lm_issue_list" class="lm-issue-list"></div>
+            </div>
+
+            <div id="lm_popup_entry_list" class="lm-entry-list" style="display:none; margin-top:10px;">
+                <input id="lm_entry_search" type="text" class="text_pole" placeholder="Search entries by name, keys, or content..." style="margin-bottom: 8px;" />
+            </div>
         </div>
 
-        <div id="lm_popup_entry_list" class="lm-entry-list" style="display:none; margin-top:10px;">
-            <input id="lm_entry_search" type="text" class="text_pole" placeholder="Search entries by name, keys, or content..." style="margin-bottom: 8px;" />
-        </div>
+        <div class="lm-popup-sidebar">
+            <div id="lm_popup_settings" class="lm-popup-settings" style="display:none;">
+                <h4>Settings</h4>
+                <label for="lm_popup_connection_profile">Connection Profile</label>
+                <select id="lm_popup_connection_profile" class="text_pole">
+                    <option value="">Active connection (default)</option>
+                </select>
+                <small class="lm-field-hint">Which connection to use for rewriting and review.</small>
 
-        <div id="lm_popup_settings" class="lm-popup-settings" style="display:none; margin-top:15px;">
-            <hr />
-            <label for="lm_popup_connection_profile">Connection Profile</label>
-            <select id="lm_popup_connection_profile" class="text_pole">
-                <option value="">Active connection (default)</option>
-            </select>
-            <small class="lm-field-hint">Which connection to use for rewriting and review. Leave on "Active connection" to use whatever your chat is currently using.</small>
+                <label for="lm_popup_max_tokens">Max Response Tokens</label>
+                <input id="lm_popup_max_tokens" type="number" min="256" max="8192" step="256" class="text_pole" value="${settings.maxTokens || 1024}" />
 
-            <label for="lm_popup_max_tokens">Max Response Tokens</label>
-            <input id="lm_popup_max_tokens" type="number" min="256" max="8192" step="256" class="text_pole" value="${settings.maxTokens || 1024}" />
+                <label for="lm_popup_review_budget">Review Batch Budget (chars)</label>
+                <input id="lm_popup_review_budget" type="number" min="2000" max="100000" step="1000" class="text_pole" value="${settings.reviewBatchBudget || 12000}" />
+                <small class="lm-field-hint">Character budget per batch for review.</small>
+            </div>
 
-            <label for="lm_popup_review_budget">Review Batch Budget (chars)</label>
-            <input id="lm_popup_review_budget" type="number" min="2000" max="100000" step="1000" class="text_pole" value="${settings.reviewBatchBudget || 12000}" />
-            <small class="lm-field-hint">Character budget per batch for whole-book review. Increase to reduce missed cross-batch duplicates.</small>
-        </div>
-
-        <div id="lm_popup_backup_section" class="lm-popup-backup-section" style="display:none; margin-top:15px;">
-            <hr />
-            <label>Backup History</label>
-            <div id="lm_popup_backup_history" class="lm-backup-history"></div>
-            <button type="button" id="lm_popup_clear_backups" class="menu_button lm-clear-all-btn" style="margin-top: 10px;">
-                <i class="fa-solid fa-trash"></i> Clear All Backups
-            </button>
+            <div id="lm_popup_backup_section" class="lm-popup-backup-section" style="display:none;">
+                <h4>Backup History</h4>
+                <div id="lm_popup_backup_history" class="lm-backup-history"></div>
+                <button type="button" id="lm_popup_clear_backups" class="menu_button lm-clear-all-btn" style="margin-top: 10px;">
+                    <i class="fa-solid fa-trash"></i> Clear All Backups
+                </button>
+            </div>
         </div>
     </div>`;
 
