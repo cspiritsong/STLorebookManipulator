@@ -72,6 +72,22 @@ export async function openMainPopup(settings, context) {
         <div id="lm_popup_entry_list" class="lm-entry-list" style="display:none; margin-top:10px;">
             <input id="lm_entry_search" type="text" class="text_pole" placeholder="Search entries by name, keys, or content..." style="margin-bottom: 8px;" />
         </div>
+
+        <div id="lm_popup_settings" class="lm-popup-settings" style="display:none; margin-top:15px;">
+            <hr />
+            <label for="lm_popup_review_budget">Review Batch Budget (chars)</label>
+            <input id="lm_popup_review_budget" type="number" min="2000" max="100000" step="1000" class="text_pole" value="${settings.reviewBatchBudget || 12000}" />
+            <small class="lm-field-hint">Character budget per batch for whole-book review. Increase to reduce missed cross-batch duplicates.</small>
+        </div>
+
+        <div id="lm_popup_backup_section" class="lm-popup-backup-section" style="display:none; margin-top:15px;">
+            <hr />
+            <label>Backup History</label>
+            <div id="lm_popup_backup_history" class="lm-backup-history"></div>
+            <button type="button" id="lm_popup_clear_backups" class="menu_button lm-clear-all-btn" style="margin-top: 10px;">
+                <i class="fa-solid fa-trash"></i> Clear All Backups
+            </button>
+        </div>
     </div>`;
 
   const popup = new Popup(popupHtml, POPUP_TYPE.TEXT, "", {
@@ -95,6 +111,37 @@ export async function openMainPopup(settings, context) {
   const reviewInstructions = container.querySelector("#lm_review_instructions");
   const reviewStatus = container.querySelector("#lm_review_status");
   const issueListEl = container.querySelector("#lm_issue_list");
+  const settingsSection = container.querySelector("#lm_popup_settings");
+  const reviewBudgetInput = container.querySelector("#lm_popup_review_budget");
+  const backupSection = container.querySelector("#lm_popup_backup_section");
+  const backupHistoryEl = container.querySelector("#lm_popup_backup_history");
+  const clearBackupsBtn = container.querySelector("#lm_popup_clear_backups");
+
+  // Wire up Review Batch Budget input
+  reviewBudgetInput?.addEventListener("change", () => {
+    const val = parseInt(reviewBudgetInput.value, 10);
+    settings.reviewBatchBudget = Math.max(2000, Math.min(100000, val || 12000));
+    context.saveSettingsDebounced();
+  });
+
+  // Wire up Clear All Backups button
+  clearBackupsBtn?.addEventListener("click", async () => {
+    if (!currentBookName) return;
+    try {
+      const { clearAllBackups } = await import("./backup.js");
+      const confirmed = await context.Popup.show.confirm(
+        "Clear All Backups",
+        `Permanently delete ALL backups for "${currentBookName}"? This cannot be undone.`,
+      );
+      if (!confirmed) return;
+      clearAllBackups(currentBookName);
+      toastr.success(`All backups for "${currentBookName}" cleared.`);
+      renderPopupBackupHistory(currentBookName);
+    } catch (e) {
+      console.error("[LorebookManipulator] Clear backups failed:", e);
+      toastr.error(`Failed to clear backups: ${e.message}`);
+    }
+  });
 
   // Cached so review results (which reference entries by uid) can be mapped
   // back to the real entry objects for the rewrite flow.
@@ -136,6 +183,78 @@ export async function openMainPopup(settings, context) {
     renderFilteredList();
   });
 
+  // Render backup history in the popup with storage indicator
+  async function renderPopupBackupHistory(bookName) {
+    if (!backupHistoryEl) return;
+    const { getBackupHistory, restoreBackup, downloadBackup, getBackupStorageUsage } = await import("./backup.js");
+    const history = getBackupHistory(bookName);
+
+    if (history.length === 0) {
+      backupHistoryEl.innerHTML = '<p class="lm-no-backups">No backups yet.</p>';
+      if (clearBackupsBtn) clearBackupsBtn.style.display = "none";
+      return;
+    }
+
+    backupHistoryEl.innerHTML = "";
+    if (clearBackupsBtn) clearBackupsBtn.style.display = "block";
+
+    for (const backup of history) {
+      const date = new Date(backup.timestamp).toLocaleString();
+      const item = document.createElement("div");
+      item.className = "lm-backup-item";
+      item.innerHTML = `
+        <span class="lm-backup-date">${escapeHtml(date)}</span>
+        <div class="lm-backup-actions">
+          <button type="button" class="menu_button lm-restore-btn" title="Restore this backup">Restore</button>
+          <button type="button" class="menu_button lm-download-btn" title="Download as file">Download</button>
+        </div>
+      `;
+
+      item.querySelector(".lm-restore-btn").addEventListener("click", async () => {
+        try {
+          const confirmed = await context.Popup.show.confirm(
+            "Restore Backup",
+            `Restore lorebook "${bookName}" to the state from ${date}? This will overwrite current data.`,
+          );
+          if (!confirmed) return;
+          restoreBackup(bookName, backup.timestamp, (name, data) => context.saveWorldInfo(name, data), () => context.reloadWorldInfoEditor?.());
+          toastr.success("Backup restored successfully.");
+          await loadAndRender(bookName);
+          renderPopupBackupHistory(bookName);
+        } catch (e) {
+          console.error("[LorebookManipulator] Restore failed:", e);
+          toastr.error(`Restore failed: ${e.message}`);
+        }
+      });
+
+      item.querySelector(".lm-download-btn").addEventListener("click", () => {
+        try {
+          const filename = downloadBackup(bookName, backup.timestamp);
+          toastr.success(`Downloaded: ${filename}`);
+        } catch (e) {
+          console.error("[LorebookManipulator] Download failed:", e);
+          toastr.error(`Download failed: ${e.message}`);
+        }
+      });
+
+      backupHistoryEl.appendChild(item);
+    }
+
+    // Storage usage indicator
+    const usage = getBackupStorageUsage();
+    const statusClass = usage.isCritical ? "lm-storage-critical" : usage.isWarning ? "lm-storage-warning" : "lm-storage-ok";
+    const statusIcon = usage.isCritical ? "⚠️" : usage.isWarning ? "⚠️" : "💾";
+    const storageEl = document.createElement("div");
+    storageEl.className = `lm-storage-indicator ${statusClass}`;
+    storageEl.innerHTML = `
+      <span class="lm-storage-label">${statusIcon} Storage:</span>
+      <span class="lm-storage-usage">${usage.formatted} used</span>
+      <span class="lm-storage-percent">(${usage.percentage}%)</span>
+      ${usage.isCritical ? '<span class="lm-storage-alert">— clear old backups!</span>' : ""}
+    `;
+    backupHistoryEl.appendChild(storageEl);
+  }
+
   // (Re)load the selected book's entries and render the list. Extracted so it
   // can be called after a delete to refresh the view.
   async function loadAndRender(bookName) {
@@ -147,6 +266,13 @@ export async function openMainPopup(settings, context) {
     currentBookName = bookName;
 
     reviewSection.style.display = entries.length > 0 ? "block" : "none";
+
+    // Show settings and backup sections when a book is selected
+    if (settingsSection) settingsSection.style.display = "block";
+    if (backupSection) backupSection.style.display = "block";
+
+    // Render backup history
+    renderPopupBackupHistory(bookName);
 
     if (entries.length === 0) {
       // Clear and re-attach search input even when no entries
