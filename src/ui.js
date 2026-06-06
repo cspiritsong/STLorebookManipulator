@@ -27,6 +27,55 @@ export function getPromptText(preset, customPrompt) {
   return PROMPT_PRESETS[preset] || PROMPT_PRESETS.prune;
 }
 
+// Pure utility functions for testability
+
+/**
+ * Filter lorebook entries by search text across name, keys, and content.
+ * @param {Array} entries - Array of lorebook entry objects
+ * @param {string} searchText - Text to search for (case-insensitive)
+ * @returns {Array} Filtered entries
+ */
+export function filterEntries(entries, searchText) {
+  if (!searchText || searchText.trim() === "") return entries;
+  const query = searchText.toLowerCase().trim();
+  return entries.filter((entry) => {
+    const name = (entry.comment || "").toLowerCase();
+    const keys = (entry.key || []).join(", ").toLowerCase();
+    const content = (entry.content || "").toLowerCase();
+    return name.includes(query) || keys.includes(query) || content.includes(query);
+  });
+}
+
+/**
+ * Compute cascade of issues to mark as FIXED when one issue is resolved.
+ * Given a fixed issue and the full issue list, returns a Set of all issues
+ * (including the originally fixed one) that share affected entry uids.
+ * @param {Object} fixedIssue - The issue that was just fixed
+ * @param {Array} allIssues - All issues from the review
+ * @param {Set} alreadyFixed - Set of issues already marked fixed
+ * @returns {Set} Extended set of issues to mark as fixed
+ */
+export function computeCascadeFixedIssues(fixedIssue, allIssues, alreadyFixed) {
+  const result = new Set(alreadyFixed);
+  result.add(fixedIssue);
+
+  const fixedUids = new Set(
+    fixedIssue.entries.map((e) => e.uid).filter((uid) => uid !== null)
+  );
+
+  if (fixedUids.size > 0) {
+    for (const otherIssue of allIssues) {
+      if (result.has(otherIssue)) continue;
+      const otherUids = otherIssue.entries.map((e) => e.uid);
+      if (otherUids.some((uid) => fixedUids.has(uid))) {
+        result.add(otherIssue);
+      }
+    }
+  }
+
+  return result;
+}
+
 // Module-level session cache. The main popup is destroyed when closed, so
 // without this, pressing Close throws away the selected lorebook, the review
 // instructions, and (most painfully) the review results the user just spent
@@ -205,20 +254,6 @@ export async function openMainPopup(settings, context) {
   // back to the real entry objects for the rewrite flow.
   let currentEntries = [];
   let currentBookName = null;
-
-  // Filter entries based on search text
-  function filterEntries(entries, searchText) {
-    if (!searchText || searchText.trim() === "") return entries;
-    const query = searchText.toLowerCase().trim();
-    return entries.filter((entry) => {
-      const name = (entry.comment || "").toLowerCase();
-      const keys = (entry.key || []).join(", ").toLowerCase();
-      const content = (entry.content || "").toLowerCase();
-      return (
-        name.includes(query) || keys.includes(query) || content.includes(query)
-      );
-    });
-  }
 
   // Re-render the entry list with current filter applied
   function renderFilteredList() {
@@ -442,22 +477,7 @@ export async function openMainPopup(settings, context) {
     // Mark it fixed, then cascade to any other unresolved issues that share
     // the same affected entry uids, refresh the list so badges show, and refresh entries.
     const markFixed = (issue) => {
-      sessionCache.fixedIssues.add(issue);
-
-      // Cascade: find all uids affected by the fixed issue, then mark any
-      // other unresolved issue that references any of those uids as fixed too.
-      const fixedUids = new Set(
-        issue.entries.map((e) => e.uid).filter((uid) => uid !== null),
-      );
-      if (fixedUids.size > 0) {
-        for (const otherIssue of issues) {
-          if (sessionCache.fixedIssues.has(otherIssue)) continue;
-          const otherUids = otherIssue.entries.map((e) => e.uid);
-          if (otherUids.some((uid) => fixedUids.has(uid))) {
-            sessionCache.fixedIssues.add(otherIssue);
-          }
-        }
-      }
+      sessionCache.fixedIssues = computeCascadeFixedIssues(issue, issues, sessionCache.fixedIssues);
 
       showReview(reviewData);
       loadAndRender(currentBookName);

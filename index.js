@@ -6,7 +6,7 @@ import {
   getBackupStorageUsage,
   clearAllBackups,
 } from "./src/backup.js";
-import { openRewritePopup, openMainPopup, getPromptText } from "./src/ui.js";
+import { openRewritePopup, openMainPopup, getPromptText, filterEntries } from "./src/ui.js";
 import { escapeHtml, escapeAttr } from "./src/utils.js";
 
 const MODULE_NAME = "lorebook_manipulator";
@@ -212,20 +212,8 @@ function renderEntryList(context) {
   container.empty();
 
   const searchInput = document.getElementById("lm_entry_search");
-  const searchText = searchInput ? searchInput.value.toLowerCase().trim() : "";
-
-  const filteredEntries = searchText
-    ? currentEntries.filter((entry) => {
-        const name = (entry.comment || "").toLowerCase();
-        const keys = (entry.key || []).join(", ").toLowerCase();
-        const content = (entry.content || "").toLowerCase();
-        return (
-          name.includes(searchText) ||
-          keys.includes(searchText) ||
-          content.includes(searchText)
-        );
-      })
-    : currentEntries;
+  const searchText = searchInput ? searchInput.value : "";
+  const filteredEntries = filterEntries(currentEntries, searchText);
 
   if (filteredEntries.length === 0) {
     container.html(
