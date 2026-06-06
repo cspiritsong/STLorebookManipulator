@@ -254,18 +254,6 @@ export async function openMainPopup(settings, context) {
     }
   });
 
-  // Wire up Create New Entry button
-  const createEntryBtn = container.querySelector("#lm_popup_create_entry");
-  createEntryBtn?.addEventListener("click", async () => {
-    if (!currentBookName) return;
-    try {
-      openCreateEntryPopup(currentBookName, settings, context, loadAndRender);
-    } catch (e) {
-      console.error("[LorebookManipulator] Create entry failed:", e);
-      toastr.error(`Failed to create entry: ${e.message}`);
-    }
-  });
-
   // Cached so review results (which reference entries by uid) can be mapped
   // back to the real entry objects for the rewrite flow.
   let currentEntries = [];
@@ -384,27 +372,47 @@ export async function openMainPopup(settings, context) {
     renderPopupBackupHistory(bookName);
 
     if (entries.length === 0) {
-      // Clear and re-attach UI controls even when no entries
+      // Rebuild UI controls even when no entries
       const savedSearch = searchInput ? searchInput.value : "";
       entryListEl.innerHTML = '<p class="lm-no-backups">No entries in this lorebook.</p>';
-      if (createEntryBtn) entryListEl.insertBefore(createEntryBtn, entryListEl.firstChild);
+      entryListEl.appendChild(buildCreateButton());
       if (searchInput) {
-        entryListEl.insertBefore(searchInput, createEntryBtn ? createEntryBtn.nextSibling : entryListEl.firstChild);
+        entryListEl.appendChild(searchInput);
         searchInput.value = savedSearch;
       }
       return;
     }
 
-    // Preserve UI controls when re-rendering
+    // Preserve search input and rebuild Create button when re-rendering
     const savedSearch = searchInput ? searchInput.value : "";
     entryListEl.innerHTML = "";
-    if (createEntryBtn) entryListEl.appendChild(createEntryBtn);
+    entryListEl.appendChild(buildCreateButton());
     if (searchInput) {
       entryListEl.appendChild(searchInput);
       searchInput.value = savedSearch;
     }
 
     renderFilteredList();
+  }
+
+  // Build a fresh Create New Entry button with its click handler
+  function buildCreateButton() {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = "lm_popup_create_entry";
+    btn.className = "menu_button menu_button_icon";
+    btn.style.marginBottom = "8px";
+    btn.innerHTML = '<i class="fa-solid fa-plus"></i> Create New Entry';
+    btn.addEventListener("click", async () => {
+      if (!currentBookName) return;
+      try {
+        openCreateEntryPopup(currentBookName, settings, context, loadAndRender);
+      } catch (e) {
+        console.error("[LorebookManipulator] Create entry failed:", e);
+        toastr.error(`Failed to create entry: ${e.message}`);
+      }
+    });
+    return btn;
   }
 
   // Confirm, back up, delete, then refresh the list in place.
