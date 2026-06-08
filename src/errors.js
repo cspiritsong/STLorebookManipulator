@@ -95,6 +95,12 @@ const RULES = [
     fix: "Check your internet connection. If you use a local model, make sure its server is running and reachable. Then try again.",
   },
   {
+    match: ["api request failed", "request failed", "api error", "<none>"],
+    title: "The AI request failed",
+    what: "The AI provider rejected or dropped the request without giving a clear reason. This most often happens when too many requests are sent in a short burst (rate limiting), the combined text was too large, or the provider/proxy had a temporary hiccup. A whole-book review fires several requests, so the next request (like a resolve) can get throttled.",
+    fix: "Wait a few seconds and try again. If you just ran a review on a large book, pause before resolving. For big duplicate sets, try resolving fewer entries at once. If it persists, check your provider's status and remaining quota.",
+  },
+  {
     match: ["no entries", "there are no entries"],
     title: "This lorebook has no entries to work with",
     what: "The selected lorebook is empty, so there is nothing to review or edit.",

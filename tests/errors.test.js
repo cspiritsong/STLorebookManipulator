@@ -98,6 +98,18 @@ assert(
   "Network/timeout error recognized",
 );
 
+// Generic API request failure (rate limit / proxy hiccup / empty cause)
+const apiFailErr = explainError(new Error("API request failed"));
+assert(
+  /ai request failed/i.test(apiFailErr.title),
+  "Generic API request failure recognized",
+);
+const noneErr = explainError(new Error("Caused by: Error: <none>"));
+assert(
+  /ai request failed/i.test(noneErr.title),
+  "Empty-cause (<none>) API failure recognized",
+);
+
 // No entries
 const emptyErr = explainError(new Error("There are no entries to review."));
 assert(/no entries/i.test(emptyErr.title), "Empty-lorebook error recognized");
