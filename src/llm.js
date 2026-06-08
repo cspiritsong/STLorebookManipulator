@@ -166,9 +166,73 @@ export function normalizeLLMContent(result) {
   throw new Error("Empty or invalid response from LLM.");
 }
 
+// Pause helper for pacing/backoff.
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Decide whether a failed request is worth retrying. Rate limits, generic
+// API failures, and transient network/proxy hiccups are retryable; auth and
+// "bad request" style errors are not (retrying won't help).
+function isRetryableError(error) {
+  const msg = (error && error.message ? error.message : String(error || "")).toLowerCase();
+  const retryable = [
+    "rate limit",
+    "rate-limit",
+    "429",
+    "too many requests",
+    "quota",
+    "api request failed",
+    "request failed",
+    "<none>",
+    "timeout",
+    "timed out",
+    "etimedout",
+    "network",
+    "fetch failed",
+    "failed to fetch",
+    "econnrefused",
+    "503",
+    "502",
+    "500",
+    "overloaded",
+  ];
+  // Don't retry clear client errors (bad key, forbidden, context too long).
+  const nonRetryable = ["401", "403", "unauthorized", "forbidden", "api key", "invalid key", "context length", "context window", "too long"];
+  if (nonRetryable.some((n) => msg.includes(n))) return false;
+  return retryable.some((r) => msg.includes(r));
+}
+
+// Send one structured request with retry-and-backoff. Retries transient
+// failures (rate limits, proxy hiccups, network blips) with exponential
+// backoff so a burst of requests (e.g. Apply All on a large book) doesn't
+// fail the moment the provider throttles. maxRetries=2 means up to 3 attempts.
+async function callLLM(args, context, maxRetries = 2) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await callLLMOnce(args, context);
+    } catch (e) {
+      lastError = e;
+      // Stop early if the error isn't worth retrying, or we're out of attempts.
+      if (attempt === maxRetries || !isRetryableError(e)) {
+        throw e;
+      }
+      // Exponential backoff: 1s, 2s, 4s ... with a little jitter.
+      const delay = 1000 * Math.pow(2, attempt) + Math.floor(Math.random() * 300);
+      console.warn(
+        `[LorebookManipulator] Request failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms:`,
+        e.message,
+      );
+      await sleep(delay);
+    }
+  }
+  throw lastError;
+}
+
 // Send one structured request, routing through a chosen connection profile
 // when `profileId` is set, otherwise through the active connection.
-async function callLLM(
+async function callLLMOnce(
   { systemPrompt, prompt, responseLength, jsonSchema, profileId },
   context,
 ) {
@@ -399,6 +463,14 @@ Report issues as JSON with an "issues" array. Reference each affected entry by i
       skippedBatches++;
     } else {
       allIssues.push(...parsed.issues);
+    }
+
+    // Pace requests between batches so a large book doesn't fire many calls
+    // back-to-back and trip the provider's rate limit. callLLM already retries
+    // with backoff, but spacing reduces the chance of throttling up front.
+    // Skip the wait after the final batch.
+    if (i < batches.length - 1) {
+      await sleep(600);
     }
   }
 

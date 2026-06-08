@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Apply All Fixes button**: after a whole-book review, you can now apply all recommended fixes in one click. The bulk operation creates a single backup, then processes each issue (single-entry rewrites and multi-entry resolve plans) sequentially, handling errors gracefully and showing progress. At the end, all successfully applied issues are automatically marked FIXED, with cascade marking for any other issues referencing the same entries.
+- **Friendly error for generic API failures**: "API request failed" / empty-cause errors now explain likely causes (rate limiting after a burst, oversized request, proxy hiccup) and how to recover.
+
+### Changed
+- **Rate-limit resilience**: every LLM request now retries transient failures (rate limits, proxy hiccups, network blips) with exponential backoff (up to 3 attempts). Auth and context-length errors are not retried (retrying wouldn't help).
+- **Request pacing**: whole-book review and Apply All now pace requests (~600ms between batches/issues) so a large book doesn't fire many calls back-to-back and trip the provider's rate limit.
 
 ## [0.8.0] - 2026-06-06
 

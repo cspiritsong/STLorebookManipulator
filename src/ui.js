@@ -497,6 +497,14 @@ export async function openMainPopup(settings, context) {
         console.error("[LorebookManipulator] ApplyAll failed for issue:", issue.description, e);
         failCount++;
       }
+
+      // Pace requests so we don't hammer the provider. callLLM already retries
+      // with backoff on rate limits, but a small gap between issues reduces the
+      // chance of tripping the limit in the first place. Skip the wait after
+      // the last issue.
+      if (i < unresolved.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 600));
+      }
     }
 
     // Compute cascade: any other issue that shares a uid with a now-fixed issue becomes fixed too.
