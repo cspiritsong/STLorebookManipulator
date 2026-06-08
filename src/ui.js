@@ -672,7 +672,9 @@ export async function openMainPopup(settings, context) {
         applyAllBtn.disabled = false;
       }
     });
-    issueListEl.appendChild(applyAllBtn);
+    // Insert at the TOP of the issue list so it's immediately visible
+    // (a large book can generate many issue cards, burying a bottom button).
+    issueListEl.insertBefore(applyAllBtn, issueListEl.firstChild);
   }
 
   reviewBtn?.addEventListener("click", async () => {
