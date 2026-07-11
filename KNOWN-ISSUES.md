@@ -49,6 +49,12 @@
 - **Workaround**: Use SillyTavern's built-in lorebook editor to create entries.
 - **Fix planned**: Debug the DOM rendering — possibly a CSS conflict or SillyTavern popup constraint preventing the button from appearing.
 
+### Chat Range Uses Internal 0-Based Message Indexes
+- **What**: Create from Chat Range accepts SillyTavern's internal chat indexes, starting at 0, with both endpoints included.
+- **Impact**: Users who count visible messages starting at 1 can select an off-by-one range.
+- **Workaround**: The popup shows the valid range (for example, `#0` to `#63`). Use those index numbers.
+- **Fix planned**: Consider an optional visible-message picker if users find numeric indexes cumbersome.
+
 ---
 
 ## Resolved Issues

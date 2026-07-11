@@ -175,7 +175,9 @@ function sleep(ms) {
 // API failures, and transient network/proxy hiccups are retryable; auth and
 // "bad request" style errors are not (retrying won't help).
 function isRetryableError(error) {
-  const msg = (error && error.message ? error.message : String(error || "")).toLowerCase();
+  const msg = (
+    error && error.message ? error.message : String(error || "")
+  ).toLowerCase();
   const retryable = [
     "rate limit",
     "rate-limit",
@@ -198,7 +200,17 @@ function isRetryableError(error) {
     "overloaded",
   ];
   // Don't retry clear client errors (bad key, forbidden, context too long).
-  const nonRetryable = ["401", "403", "unauthorized", "forbidden", "api key", "invalid key", "context length", "context window", "too long"];
+  const nonRetryable = [
+    "401",
+    "403",
+    "unauthorized",
+    "forbidden",
+    "api key",
+    "invalid key",
+    "context length",
+    "context window",
+    "too long",
+  ];
   if (nonRetryable.some((n) => msg.includes(n))) return false;
   return retryable.some((r) => msg.includes(r));
 }
@@ -219,7 +231,8 @@ async function callLLM(args, context, maxRetries = 2) {
         throw e;
       }
       // Exponential backoff: 1s, 2s, 4s ... with a little jitter.
-      const delay = 1000 * Math.pow(2, attempt) + Math.floor(Math.random() * 300);
+      const delay =
+        1000 * Math.pow(2, attempt) + Math.floor(Math.random() * 300);
       console.warn(
         `[LorebookManipulator] Request failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms:`,
         e.message,
@@ -325,6 +338,69 @@ Rewrite this entry according to the instructions above. Return your response as 
     return parseLLMResponse(result);
   } catch (e) {
     console.error("[LorebookManipulator] LLM call failed:", e);
+    throw new Error(
+      `LLM request failed: ${e.message}. Check your API connection and try again.`,
+    );
+  }
+}
+
+// ── Create a lorebook entry from a chat-message range ─────────────────────
+
+export async function generateEntryFromChat(
+  messages,
+  instructions,
+  maxTokens,
+  context,
+  profileId = null,
+) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    throw new Error(
+      "Choose at least one non-system chat message to summarize.",
+    );
+  }
+
+  const chatText = messages
+    .map((message) => {
+      const number = Number.isInteger(message.index) ? `#${message.index}` : "";
+      const speaker = message.name || (message.is_user ? "User" : "Character");
+      return `--- Message ${number} | ${speaker} ---\n${message.mes || ""}`;
+    })
+    .join("\n\n");
+
+  const systemPrompt = `You convert explicit SillyTavern chat-message ranges into one new lorebook entry.
+
+RULES:
+- Use ONLY facts established in the supplied messages. Never invent details, motives, names, or outcomes.
+- Produce a concise, factual reference entry useful in future chats.
+- Prefer specific proper nouns or distinctive phrases for primary keys. Do not use broad common words such as "the world", "powers", "war", or "current status" unless the user explicitly asks for them.
+- Do not include dialogue transcripts, speculation, or meta commentary in content.
+- Return ONLY valid JSON matching the required schema.`;
+
+  const userPrompt = `## User Instructions
+${instructions && instructions.trim() ? instructions.trim() : "Summarize the durable facts established in this chat range as one new lorebook entry."}
+
+## Chat Messages
+${chatText}
+
+Create one new lorebook entry from this range. Return title, primaryKeys, secondaryKeys, content, and justification as JSON.`;
+
+  try {
+    const result = await callLLM(
+      {
+        systemPrompt,
+        prompt: userPrompt,
+        responseLength: maxTokens || 1024,
+        jsonSchema: CHAT_ENTRY_SCHEMA,
+        profileId,
+      },
+      context,
+    );
+    return parseChatEntryResponse(result);
+  } catch (e) {
+    console.error(
+      "[LorebookManipulator] Chat-range entry generation failed:",
+      e,
+    );
     throw new Error(
       `LLM request failed: ${e.message}. Check your API connection and try again.`,
     );
@@ -618,6 +694,37 @@ export function parseLLMResponse(rawText) {
   return {
     rewrittenContent: parsed.rewrittenContent.trim(),
     justification: parsed.justification.trim(),
+  };
+}
+
+// Parse and normalize a generated entry from a chat range. Keys are sanitized
+// here so the UI can pass the result directly to createEntry after approval.
+export function parseChatEntryResponse(rawText) {
+  const parsed = extractJson(rawText);
+
+  if (typeof parsed.content !== "string" || parsed.content.trim() === "") {
+    throw new Error(
+      'Chat summary response missing "content" field or it is empty.',
+    );
+  }
+
+  const normalizeKeys = (value) =>
+    Array.isArray(value)
+      ? value
+          .filter((key) => typeof key === "string")
+          .map((key) => key.trim())
+          .filter(Boolean)
+      : [];
+
+  return {
+    title: typeof parsed.title === "string" ? parsed.title.trim() : "",
+    primaryKeys: normalizeKeys(parsed.primaryKeys),
+    secondaryKeys: normalizeKeys(parsed.secondaryKeys),
+    content: parsed.content.trim(),
+    justification:
+      typeof parsed.justification === "string" && parsed.justification.trim()
+        ? parsed.justification.trim()
+        : "(No justification provided)",
   };
 }
 

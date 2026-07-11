@@ -1,4 +1,8 @@
-import { parseLLMResponse, normalizeLLMContent } from "../src/llm.js";
+import {
+  parseChatEntryResponse,
+  parseLLMResponse,
+  normalizeLLMContent,
+} from "../src/llm.js";
 
 let passed = 0;
 let failed = 0;
@@ -185,6 +189,64 @@ const e2e = parseLLMResponse(
 assert(
   e2e.rewrittenContent === "E2E.",
   "ExtractedData object content parses through parseLLMResponse",
+);
+
+console.log("\n=== Chat Range Entry Parsing Tests ===\n");
+
+const chatEntryJson = JSON.stringify({
+  title: "Vanessa's Moonblast Discovery",
+  primaryKeys: ["Vanessa Albright", "Moonblast"],
+  secondaryKeys: ["Glimmer"],
+  content: "Vanessa discovered that Moonblast fragments amplify her gifts.",
+  justification: "Captures the durable discovery from the selected messages.",
+});
+const chatEntry = parseChatEntryResponse(chatEntryJson);
+assert(
+  chatEntry.title === "Vanessa's Moonblast Discovery",
+  "Parses generated chat-entry title",
+);
+assert(
+  chatEntry.primaryKeys.length === 2 &&
+    chatEntry.primaryKeys[1] === "Moonblast",
+  "Parses generated chat-entry primary keys",
+);
+assert(
+  chatEntry.secondaryKeys[0] === "Glimmer",
+  "Parses generated chat-entry secondary keys",
+);
+assert(
+  chatEntry.content.includes("amplify her gifts"),
+  "Parses generated chat-entry content",
+);
+
+const chatEntryMessyKeys = parseChatEntryResponse(
+  JSON.stringify({
+    title: "  Test  ",
+    primaryKeys: ["  alpha ", "", 42, "beta"],
+    secondaryKeys: "not an array",
+    content: "  A factual summary.  ",
+    justification: 123,
+  }),
+);
+assert(
+  JSON.stringify(chatEntryMessyKeys.primaryKeys) ===
+    JSON.stringify(["alpha", "beta"]),
+  "Sanitizes chat-entry keys",
+);
+assert(
+  chatEntryMessyKeys.secondaryKeys.length === 0,
+  "Coerces invalid secondary keys to empty array",
+);
+assert(
+  chatEntryMessyKeys.content === "A factual summary.",
+  "Trims chat-entry content",
+);
+assertThrows(
+  () =>
+    parseChatEntryResponse(
+      '{"title":"Test","content":"","primaryKeys":[],"secondaryKeys":[],"justification":"x"}',
+    ),
+  "Throws when generated chat-entry content is empty",
 );
 
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);

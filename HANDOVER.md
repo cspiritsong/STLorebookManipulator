@@ -112,9 +112,9 @@ We benchmarked against the [World Info Recommender](https://github.com/bmen25124
 - [ ] Savable prompt presets (currently: presets + custom, but not persisted as named presets)
 - [ ] Blacklist (don't re-flag this issue)
 
-**Bucket C — different use case (likely out of scope)**
-- [ ] Generate brand-new entries (WREC's main feature; not our goal)
-- [ ] Chat-aware context (uses chat history for suggestions)
+**Bucket C — different use case (selectively adopted)**
+- [x] Create one new entry from an explicit chat-message range — *Implemented in unreleased; JSON schema + manual approval, not XML*
+- [ ] General chat-aware context for arbitrary suggestions
 - [ ] Streaming responses
 
 **User's explicit direction** on Bucket C: "skip C, or at most do it much later if you personally find you want it." Bucket C turns this from a cleanup tool into a WREC clone.

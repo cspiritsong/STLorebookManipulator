@@ -1,4 +1,9 @@
-import { generateRewrite, reviewEntries, resolveIssue } from "./llm.js";
+import {
+  generateEntryFromChat,
+  generateRewrite,
+  reviewEntries,
+  resolveIssue,
+} from "./llm.js";
 import { computeDiff, renderInlineDiff, renderSideBySideDiff } from "./diff.js";
 import { createBackup } from "./backup.js";
 import {
@@ -43,7 +48,9 @@ export function filterEntries(entries, searchText) {
     const name = (entry.comment || "").toLowerCase();
     const keys = (entry.key || []).join(", ").toLowerCase();
     const content = (entry.content || "").toLowerCase();
-    return name.includes(query) || keys.includes(query) || content.includes(query);
+    return (
+      name.includes(query) || keys.includes(query) || content.includes(query)
+    );
   });
 }
 
@@ -61,7 +68,7 @@ export function computeCascadeFixedIssues(fixedIssue, allIssues, alreadyFixed) {
   result.add(fixedIssue);
 
   const fixedUids = new Set(
-    fixedIssue.entries.map((e) => e.uid).filter((uid) => uid !== null)
+    fixedIssue.entries.map((e) => e.uid).filter((uid) => uid !== null),
   );
 
   if (fixedUids.size > 0) {
@@ -120,6 +127,38 @@ export async function openMainPopup(settings, context) {
                 <div id="lm_issue_list" class="lm-issue-list"></div>
             </div>
 
+            <div id="lm_chat_range_section" class="lm-chat-range-section" style="display:none;">
+                <h4>Create from Chat Range</h4>
+                <small id="lm_chat_range_hint" class="lm-field-hint"></small>
+                <div class="lm-chat-range-inputs">
+                    <label for="lm_chat_start">Start message #</label>
+                    <input id="lm_chat_start" type="number" min="0" step="1" class="text_pole" />
+                    <label for="lm_chat_end">End message #</label>
+                    <input id="lm_chat_end" type="number" min="0" step="1" class="text_pole" />
+                </div>
+                <label for="lm_chat_instructions">What should this entry capture?</label>
+                <textarea id="lm_chat_instructions" class="text_pole textarea_compact" rows="2"
+                    placeholder="Optional: e.g. Summarize the newly established facts about Vanessa."></textarea>
+                <button type="button" id="lm_chat_generate" class="menu_button menu_button_icon">
+                    <i class="fa-solid fa-file-circle-plus"></i> Generate Entry from Messages
+                </button>
+                <div id="lm_chat_status" class="lm-status"></div>
+                <div id="lm_chat_preview" style="display:none;">
+                    <label for="lm_chat_title">Title</label>
+                    <input id="lm_chat_title" type="text" class="text_pole" />
+                    <label for="lm_chat_keys">Primary Keys (comma-separated)</label>
+                    <input id="lm_chat_keys" type="text" class="text_pole" />
+                    <label for="lm_chat_secondary">Secondary Keys (comma-separated)</label>
+                    <input id="lm_chat_secondary" type="text" class="text_pole" />
+                    <label for="lm_chat_content">New Entry Content</label>
+                    <textarea id="lm_chat_content" class="text_pole lm-content-textarea" rows="8"></textarea>
+                    <div id="lm_chat_justification" class="lm-justification"></div>
+                    <button type="button" id="lm_chat_add" class="menu_button menu_button_icon">
+                        <i class="fa-solid fa-plus"></i> Add to Lorebook
+                    </button>
+                </div>
+            </div>
+
             <div id="lm_popup_entry_list" class="lm-entry-list" style="display:none; margin-top:10px;">
                 <button type="button" id="lm_popup_create_entry" class="menu_button menu_button_icon" style="margin-bottom: 8px;">
                     <i class="fa-solid fa-plus"></i> Create New Entry
@@ -176,8 +215,24 @@ export async function openMainPopup(settings, context) {
   const reviewInstructions = container.querySelector("#lm_review_instructions");
   const reviewStatus = container.querySelector("#lm_review_status");
   const issueListEl = container.querySelector("#lm_issue_list");
+  const chatRangeSection = container.querySelector("#lm_chat_range_section");
+  const chatRangeHint = container.querySelector("#lm_chat_range_hint");
+  const chatStartInput = container.querySelector("#lm_chat_start");
+  const chatEndInput = container.querySelector("#lm_chat_end");
+  const chatInstructions = container.querySelector("#lm_chat_instructions");
+  const chatGenerateBtn = container.querySelector("#lm_chat_generate");
+  const chatStatus = container.querySelector("#lm_chat_status");
+  const chatPreview = container.querySelector("#lm_chat_preview");
+  const chatTitleInput = container.querySelector("#lm_chat_title");
+  const chatKeysInput = container.querySelector("#lm_chat_keys");
+  const chatSecondaryInput = container.querySelector("#lm_chat_secondary");
+  const chatContentInput = container.querySelector("#lm_chat_content");
+  const chatJustification = container.querySelector("#lm_chat_justification");
+  const chatAddBtn = container.querySelector("#lm_chat_add");
   const settingsSection = container.querySelector("#lm_popup_settings");
-  const connectionProfileSelect = container.querySelector("#lm_popup_connection_profile");
+  const connectionProfileSelect = container.querySelector(
+    "#lm_popup_connection_profile",
+  );
   const maxTokensInput = container.querySelector("#lm_popup_max_tokens");
   const reviewBudgetInput = container.querySelector("#lm_popup_review_budget");
   const backupSection = container.querySelector("#lm_popup_backup_section");
@@ -194,12 +249,17 @@ export async function openMainPopup(settings, context) {
     try {
       profiles = service.getSupportedProfiles() || [];
     } catch (e) {
-      console.warn("[LorebookManipulator] Could not list connection profiles:", e);
+      console.warn(
+        "[LorebookManipulator] Could not list connection profiles:",
+        e,
+      );
       return;
     }
 
     // Clear existing options except the first one
-    connectionProfileSelect.querySelectorAll("option:not(:first-child)").forEach(opt => opt.remove());
+    connectionProfileSelect
+      .querySelectorAll("option:not(:first-child)")
+      .forEach((opt) => opt.remove());
 
     for (const profile of profiles) {
       const opt = document.createElement("option");
@@ -259,6 +319,116 @@ export async function openMainPopup(settings, context) {
   let currentEntries = [];
   let currentBookName = null;
 
+  // Return the selected inclusive message range, preserving original chat
+  // indexes so the user can refer to the same numbers they entered.
+  function getSelectedChatMessages() {
+    const chat = Array.isArray(context.chat) ? context.chat : [];
+    const start = Number(chatStartInput?.value);
+    const end = Number(chatEndInput?.value);
+
+    if (!Number.isInteger(start) || !Number.isInteger(end)) {
+      throw new Error("Enter whole-number start and end message indexes.");
+    }
+    if (start < 0 || end < start || end >= chat.length) {
+      throw new Error(
+        `Choose a valid inclusive range from 0 to ${Math.max(0, chat.length - 1)}.`,
+      );
+    }
+
+    const messages = chat
+      .slice(start, end + 1)
+      .map((message, offset) => ({ ...message, index: start + offset }))
+      .filter(
+        (message) => !message.is_system && String(message.mes || "").trim(),
+      );
+
+    if (messages.length === 0) {
+      throw new Error(
+        "That range contains no usable chat messages. Try a different range.",
+      );
+    }
+    return messages;
+  }
+
+  // Generate a proposed new entry, but leave every field editable until the
+  // user explicitly chooses Add to Lorebook.
+  chatGenerateBtn?.addEventListener("click", async () => {
+    if (!currentBookName) return;
+    try {
+      const messages = getSelectedChatMessages();
+      showStatus(
+        chatStatus,
+        `Summarizing ${messages.length} message(s)...`,
+        "loading",
+      );
+      chatGenerateBtn.disabled = true;
+
+      const result = await generateEntryFromChat(
+        messages,
+        chatInstructions?.value || "",
+        settings.maxTokens,
+        context,
+        settings.connectionProfileId || null,
+      );
+
+      if (chatTitleInput) chatTitleInput.value = result.title;
+      if (chatKeysInput) chatKeysInput.value = result.primaryKeys.join(", ");
+      if (chatSecondaryInput)
+        chatSecondaryInput.value = result.secondaryKeys.join(", ");
+      if (chatContentInput) chatContentInput.value = result.content;
+      if (chatJustification) {
+        chatJustification.innerHTML = `<strong>Why this entry:</strong> ${escapeHtml(result.justification)}`;
+      }
+      if (chatPreview) chatPreview.style.display = "block";
+      showStatus(
+        chatStatus,
+        "Entry draft ready. Edit anything you want, then Add to Lorebook.",
+        "success",
+      );
+    } catch (e) {
+      console.error("[LorebookManipulator] Chat-range generation failed:", e);
+      showFriendlyError(chatStatus, e);
+    } finally {
+      chatGenerateBtn.disabled = false;
+    }
+  });
+
+  chatAddBtn?.addEventListener("click", async () => {
+    if (!currentBookName) return;
+    try {
+      const fields = {
+        comment: chatTitleInput?.value || "",
+        key: parseKeywordString(chatKeysInput?.value || ""),
+        keysecondary: parseKeywordString(chatSecondaryInput?.value || ""),
+        content: chatContentInput?.value || "",
+      };
+      if (!fields.content.trim()) {
+        throw new Error("New entry content cannot be empty.");
+      }
+
+      showStatus(chatStatus, "Adding entry to lorebook...", "loading");
+      chatAddBtn.disabled = true;
+      const bookData = await context.loadWorldInfo(currentBookName);
+      createBackup(currentBookName, bookData, settings.backupRetention);
+      const uid = await createEntry(currentBookName, fields, context);
+
+      if (chatPreview) chatPreview.style.display = "none";
+      toastr.success(`Created entry #${uid}.`);
+      showStatus(
+        chatStatus,
+        "Entry added. A backup was saved first.",
+        "success",
+      );
+      await loadAndRender(currentBookName);
+      await renderPopupBackupHistory(currentBookName);
+    } catch (e) {
+      console.error("[LorebookManipulator] Adding chat-range entry failed:", e);
+      showFriendlyError(chatStatus, e);
+    } finally {
+      chatAddBtn.disabled = false;
+    }
+  });
+
   // Re-render the entry list with current filter applied
   function renderFilteredList() {
     const searchText = searchInput ? searchInput.value : "";
@@ -283,11 +453,17 @@ export async function openMainPopup(settings, context) {
   // Render backup history in the popup with storage indicator
   async function renderPopupBackupHistory(bookName) {
     if (!backupHistoryEl) return;
-    const { getBackupHistory, restoreBackup, downloadBackup, getBackupStorageUsage } = await import("./backup.js");
+    const {
+      getBackupHistory,
+      restoreBackup,
+      downloadBackup,
+      getBackupStorageUsage,
+    } = await import("./backup.js");
     const history = getBackupHistory(bookName);
 
     if (history.length === 0) {
-      backupHistoryEl.innerHTML = '<p class="lm-no-backups">No backups yet.</p>';
+      backupHistoryEl.innerHTML =
+        '<p class="lm-no-backups">No backups yet.</p>';
       if (clearBackupsBtn) clearBackupsBtn.style.display = "none";
       return;
     }
@@ -307,22 +483,29 @@ export async function openMainPopup(settings, context) {
         </div>
       `;
 
-      item.querySelector(".lm-restore-btn").addEventListener("click", async () => {
-        try {
-          const confirmed = await context.Popup.show.confirm(
-            "Restore Backup",
-            `Restore lorebook "${bookName}" to the state from ${date}? This will overwrite current data.`,
-          );
-          if (!confirmed) return;
-          restoreBackup(bookName, backup.timestamp, (name, data) => context.saveWorldInfo(name, data), () => context.reloadWorldInfoEditor?.());
-          toastr.success("Backup restored successfully.");
-          await loadAndRender(bookName);
-          renderPopupBackupHistory(bookName);
-        } catch (e) {
-          console.error("[LorebookManipulator] Restore failed:", e);
-          toastr.error(`Restore failed: ${e.message}`);
-        }
-      });
+      item
+        .querySelector(".lm-restore-btn")
+        .addEventListener("click", async () => {
+          try {
+            const confirmed = await context.Popup.show.confirm(
+              "Restore Backup",
+              `Restore lorebook "${bookName}" to the state from ${date}? This will overwrite current data.`,
+            );
+            if (!confirmed) return;
+            restoreBackup(
+              bookName,
+              backup.timestamp,
+              (name, data) => context.saveWorldInfo(name, data),
+              () => context.reloadWorldInfoEditor?.(),
+            );
+            toastr.success("Backup restored successfully.");
+            await loadAndRender(bookName);
+            renderPopupBackupHistory(bookName);
+          } catch (e) {
+            console.error("[LorebookManipulator] Restore failed:", e);
+            toastr.error(`Restore failed: ${e.message}`);
+          }
+        });
 
       item.querySelector(".lm-download-btn").addEventListener("click", () => {
         try {
@@ -339,7 +522,11 @@ export async function openMainPopup(settings, context) {
 
     // Storage usage indicator
     const usage = getBackupStorageUsage();
-    const statusClass = usage.isCritical ? "lm-storage-critical" : usage.isWarning ? "lm-storage-warning" : "lm-storage-ok";
+    const statusClass = usage.isCritical
+      ? "lm-storage-critical"
+      : usage.isWarning
+        ? "lm-storage-warning"
+        : "lm-storage-ok";
     const statusIcon = usage.isCritical ? "⚠️" : usage.isWarning ? "⚠️" : "💾";
     const storageEl = document.createElement("div");
     storageEl.className = `lm-storage-indicator ${statusClass}`;
@@ -368,13 +555,33 @@ export async function openMainPopup(settings, context) {
     if (settingsSection) settingsSection.style.display = "block";
     if (backupSection) backupSection.style.display = "block";
 
+    // Chat-range generation can create an entry even for an empty lorebook.
+    const chatCount = Array.isArray(context.chat) ? context.chat.length : 0;
+    if (chatRangeSection)
+      chatRangeSection.style.display = chatCount > 0 ? "block" : "none";
+    if (chatCount > 0) {
+      if (chatRangeHint) {
+        chatRangeHint.textContent = `Current chat has ${chatCount} messages. Use 0-based, inclusive indexes (#0 to #${chatCount - 1}).`;
+      }
+      if (chatStartInput) {
+        chatStartInput.max = String(chatCount - 1);
+        if (!chatStartInput.value)
+          chatStartInput.value = String(Math.max(0, chatCount - 10));
+      }
+      if (chatEndInput) {
+        chatEndInput.max = String(chatCount - 1);
+        if (!chatEndInput.value) chatEndInput.value = String(chatCount - 1);
+      }
+    }
+
     // Render backup history
     renderPopupBackupHistory(bookName);
 
     if (entries.length === 0) {
       // Rebuild UI controls even when no entries
       const savedSearch = searchInput ? searchInput.value : "";
-      entryListEl.innerHTML = '<p class="lm-no-backups">No entries in this lorebook.</p>';
+      entryListEl.innerHTML =
+        '<p class="lm-no-backups">No entries in this lorebook.</p>';
       entryListEl.appendChild(buildCreateButton());
       if (searchInput) {
         entryListEl.appendChild(searchInput);
@@ -418,7 +625,9 @@ export async function openMainPopup(settings, context) {
   // Apply fixes for all unresolved issues in bulk.
   async function applyAllFixes(allIssues, reviewData, statusEl) {
     // Find issues not yet fixed
-    const unresolved = allIssues.filter((issue) => !sessionCache.fixedIssues.has(issue));
+    const unresolved = allIssues.filter(
+      (issue) => !sessionCache.fixedIssues.has(issue),
+    );
     if (unresolved.length === 0) {
       toastr.info("All issues are already fixed.");
       return;
@@ -431,7 +640,11 @@ export async function openMainPopup(settings, context) {
     );
     if (!confirmed) return;
 
-    showStatus(statusEl, `Applying fixes for ${unresolved.length} issues...`, "loading");
+    showStatus(
+      statusEl,
+      `Applying fixes for ${unresolved.length} issues...`,
+      "loading",
+    );
 
     // Create one backup up-front
     const bookData = await context.loadWorldInfo(currentBookName);
@@ -446,8 +659,12 @@ export async function openMainPopup(settings, context) {
     // Process each unresolved issue
     for (let i = 0; i < unresolved.length; i++) {
       const issue = unresolved[i];
-      showStatus(statusEl, `Applying fix ${i + 1}/${unresolved.length}: ${issue.description || "issue"}...`, "loading");
-      
+      showStatus(
+        statusEl,
+        `Applying fix ${i + 1}/${unresolved.length}: ${issue.description || "issue"}...`,
+        "loading",
+      );
+
       try {
         if (issue.entries.length === 1) {
           // Single-entry fix: rewrite content
@@ -458,8 +675,20 @@ export async function openMainPopup(settings, context) {
             continue;
           }
 
-          const rewrite = await generateRewrite(entryObj, instructions, settings, context);
-          await updateEntryFields(currentBookName, entryUid, { content: rewrite.rewrittenContent }, context);
+          const rewriteInstructions = `${instructions || "Rewrite this entry to address the review issue."}\n\nThis entry was flagged in a lorebook review (${issue.type}, ${issue.severity} severity):\n${issue.description}\n\nAddress this specific issue in your rewrite.`;
+          const rewrite = await generateRewrite(
+            entryObj.content,
+            rewriteInstructions,
+            settings.maxTokens,
+            context,
+            settings.connectionProfileId || null,
+          );
+          await updateEntryFields(
+            currentBookName,
+            entryUid,
+            { content: rewrite.rewrittenContent },
+            context,
+          );
         } else {
           // Multi-entry fix: create a plan and apply all actions
           // Resolve which entries from currentEntries are actually affected
@@ -468,13 +697,23 @@ export async function openMainPopup(settings, context) {
             .filter(Boolean);
 
           if (affectedEntries.length === 0) {
-            console.warn(`[ApplyAll] No valid affected entries for issue, skipping`);
+            console.warn(
+              `[ApplyAll] No valid affected entries for issue, skipping`,
+            );
             continue;
           }
 
-          const plan = await resolveIssue(issue, affectedEntries, settings.maxTokens, context, settings.connectionProfileId || null);
+          const plan = await resolveIssue(
+            issue,
+            affectedEntries,
+            settings.maxTokens,
+            context,
+            settings.connectionProfileId || null,
+          );
           if (!plan.actions || plan.actions.length === 0) {
-            console.warn(`[ApplyAll] Resolve produced no actions for issue, skipping`);
+            console.warn(
+              `[ApplyAll] Resolve produced no actions for issue, skipping`,
+            );
             continue;
           }
 
@@ -483,7 +722,12 @@ export async function openMainPopup(settings, context) {
           const deletes = plan.actions.filter((a) => a.action === "delete");
 
           for (const a of rewrites) {
-            await updateEntryFields(currentBookName, a.uid, { content: a.newContent }, context);
+            await updateEntryFields(
+              currentBookName,
+              a.uid,
+              { content: a.newContent },
+              context,
+            );
           }
           for (const a of deletes) {
             await deleteEntry(currentBookName, a.uid, context);
@@ -494,7 +738,11 @@ export async function openMainPopup(settings, context) {
         newFixed.add(issue);
         successCount++;
       } catch (e) {
-        console.error("[LorebookManipulator] ApplyAll failed for issue:", issue.description, e);
+        console.error(
+          "[LorebookManipulator] ApplyAll failed for issue:",
+          issue.description,
+          e,
+        );
         failCount++;
       }
 
@@ -511,13 +759,17 @@ export async function openMainPopup(settings, context) {
     const finalFixed = new Set(newFixed);
     for (const issue of allIssues) {
       if (finalFixed.has(issue)) continue;
-      const uids = issue.entries.map((e) => e.uid).filter((uid) => uid !== null);
-      if (uids.some((uid) => {
-        for (const fixedIssue of finalFixed) {
-          if (fixedIssue.entries.some((fe) => fe.uid === uid)) return true;
-        }
-        return false;
-      })) {
+      const uids = issue.entries
+        .map((e) => e.uid)
+        .filter((uid) => uid !== null);
+      if (
+        uids.some((uid) => {
+          for (const fixedIssue of finalFixed) {
+            if (fixedIssue.entries.some((fe) => fe.uid === uid)) return true;
+          }
+          return false;
+        })
+      ) {
         finalFixed.add(issue);
       }
     }
@@ -529,9 +781,10 @@ export async function openMainPopup(settings, context) {
     await loadAndRender(currentBookName);
 
     // Final status
-    const msg = failCount > 0
-      ? `Applied ${successCount} fix(es), ${failCount} failed.`
-      : `Successfully applied all ${successCount} fixes!`;
+    const msg =
+      failCount > 0
+        ? `Applied ${successCount} fix(es), ${failCount} failed.`
+        : `Successfully applied all ${successCount} fixes!`;
     showStatus(statusEl, msg, failCount > 0 ? "error" : "success");
     if (failCount === 0) {
       toastr.success(msg);
@@ -627,41 +880,45 @@ export async function openMainPopup(settings, context) {
     // Mark it fixed, then cascade to any other unresolved issues that share
     // the same affected entry uids, refresh the list so badges show, and refresh entries.
     const markFixed = (issue) => {
-      sessionCache.fixedIssues = computeCascadeFixedIssues(issue, issues, sessionCache.fixedIssues);
+      sessionCache.fixedIssues = computeCascadeFixedIssues(
+        issue,
+        issues,
+        sessionCache.fixedIssues,
+      );
 
       showReview(reviewData);
       loadAndRender(currentBookName);
     };
 
-     renderIssueList(
-       issueListEl,
-       issues,
-       currentEntries,
-       sessionCache.fixedIssues,
-       (entry, issue) => {
-         // Single-entry issue → open the editor on top; on success mark fixed.
-         openRewritePopup(
-           entry,
-           currentBookName,
-           settings,
-           context,
-           issue,
-           null,
-           () => markFixed(issue),
-         );
-       },
-       (issue, affectedEntries) => {
-         // Multi-entry issue → open the cross-entry resolve flow.
-         openResolvePopup(
-           issue,
-           affectedEntries,
-           currentBookName,
-           settings,
-           context,
-           () => markFixed(issue),
-         );
-       },
-     );
+    renderIssueList(
+      issueListEl,
+      issues,
+      currentEntries,
+      sessionCache.fixedIssues,
+      (entry, issue) => {
+        // Single-entry issue → open the editor on top; on success mark fixed.
+        openRewritePopup(
+          entry,
+          currentBookName,
+          settings,
+          context,
+          issue,
+          null,
+          () => markFixed(issue),
+        );
+      },
+      (issue, affectedEntries) => {
+        // Multi-entry issue → open the cross-entry resolve flow.
+        openResolvePopup(
+          issue,
+          affectedEntries,
+          currentBookName,
+          settings,
+          context,
+          () => markFixed(issue),
+        );
+      },
+    );
 
     // Add "Apply All Fixes" button for bulk resolution
     const oldBtn = issueListEl.querySelector(".lm-apply-all-btn");
@@ -1276,7 +1533,12 @@ export async function openResolvePopup(
 }
 
 // Open a popup to create a new lorebook entry. On success, the entry list is refreshed.
-export async function openCreateEntryPopup(bookName, settings, context, onRefresh) {
+export async function openCreateEntryPopup(
+  bookName,
+  settings,
+  context,
+  onRefresh,
+) {
   const { Popup, POPUP_TYPE } = context;
 
   const popupHtml = `<div class="lm-create-entry-popup">
@@ -1334,12 +1596,16 @@ export async function openCreateEntryPopup(bookName, settings, context, onRefres
     const bookData = await context.loadWorldInfo(bookName);
     createBackup(bookName, bookData, settings.backupRetention);
 
-    const newUid = await createEntry(bookName, {
-      comment: title,
-      key: keys,
-      keysecondary: secondaryKeys,
-      content: content,
-    }, context);
+    const newUid = await createEntry(
+      bookName,
+      {
+        comment: title,
+        key: keys,
+        keysecondary: secondaryKeys,
+        content: content,
+      },
+      context,
+    );
 
     toastr.success(`Entry created (UID ${newUid}).`);
     if (typeof onRefresh === "function") onRefresh(bookName);
