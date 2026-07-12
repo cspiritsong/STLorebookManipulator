@@ -80,6 +80,26 @@
     margin-top: 8px;
 }
 
+.lm-chat-history {
+    margin-top: 10px;
+    font-size: 0.88em;
+    color: var(--SmartThemeSubtleColor, #aaa);
+}
+
+.lm-chat-history-item {
+    margin-top: 6px;
+    padding: 7px 9px;
+    border-left: 3px solid var(--SmartThemeColor, #5cf4a0);
+    background: var(--SmartThemeBotMesBlurTintColor, rgba(0, 0, 0, 0.15));
+    border-radius: 3px;
+    line-height: 1.4;
+}
+
+.lm-chat-history-item span {
+    color: var(--SmartThemeColor, #5cf4a0);
+    font-weight: bold;
+}
+
 @media (max-width: 800px) {
     .lm-popup-layout {
         flex-direction: column;

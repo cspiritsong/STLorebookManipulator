@@ -2,6 +2,7 @@ import {
   generateEntryFromChat,
   generateRewrite,
   reviewEntries,
+  reviseChatEntryDraft,
   resolveIssue,
 } from "./llm.js";
 import { computeDiff, renderInlineDiff, renderSideBySideDiff } from "./diff.js";
@@ -97,6 +98,9 @@ const sessionCache = {
   instructions: "",
   review: null,
   fixedIssues: new Set(),
+  // Active chat-range draft survives an accidental Close/reopen for the same
+  // lorebook. It stays in memory only; Add to Lorebook is still explicit.
+  chatDraft: null,
 };
 
 export async function openMainPopup(settings, context) {
@@ -153,6 +157,13 @@ export async function openMainPopup(settings, context) {
                     <label for="lm_chat_content">New Entry Content</label>
                     <textarea id="lm_chat_content" class="text_pole lm-content-textarea" rows="8"></textarea>
                     <div id="lm_chat_justification" class="lm-justification"></div>
+                    <label for="lm_chat_refine">Refine this draft</label>
+                    <textarea id="lm_chat_refine" class="text_pole textarea_compact" rows="2"
+                        placeholder="e.g. Make it shorter, emphasize the relationship, remove the timeline."></textarea>
+                    <button type="button" id="lm_chat_refine_btn" class="menu_button menu_button_icon">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> Revise Draft
+                    </button>
+                    <div id="lm_chat_history" class="lm-chat-history"></div>
                     <button type="button" id="lm_chat_add" class="menu_button menu_button_icon">
                         <i class="fa-solid fa-plus"></i> Add to Lorebook
                     </button>
@@ -228,6 +239,9 @@ export async function openMainPopup(settings, context) {
   const chatSecondaryInput = container.querySelector("#lm_chat_secondary");
   const chatContentInput = container.querySelector("#lm_chat_content");
   const chatJustification = container.querySelector("#lm_chat_justification");
+  const chatRefineInput = container.querySelector("#lm_chat_refine");
+  const chatRefineBtn = container.querySelector("#lm_chat_refine_btn");
+  const chatHistory = container.querySelector("#lm_chat_history");
   const chatAddBtn = container.querySelector("#lm_chat_add");
   const settingsSection = container.querySelector("#lm_popup_settings");
   const connectionProfileSelect = container.querySelector(
@@ -350,6 +364,54 @@ export async function openMainPopup(settings, context) {
     return messages;
   }
 
+  function readChatDraftFromInputs() {
+    return {
+      title: chatTitleInput?.value || "",
+      primaryKeys: parseKeywordString(chatKeysInput?.value || ""),
+      secondaryKeys: parseKeywordString(chatSecondaryInput?.value || ""),
+      content: chatContentInput?.value || "",
+    };
+  }
+
+  function renderChatDraft(draft) {
+    if (chatTitleInput) chatTitleInput.value = draft.title || "";
+    if (chatKeysInput)
+      chatKeysInput.value = (draft.primaryKeys || []).join(", ");
+    if (chatSecondaryInput)
+      chatSecondaryInput.value = (draft.secondaryKeys || []).join(", ");
+    if (chatContentInput) chatContentInput.value = draft.content || "";
+    if (chatJustification) {
+      chatJustification.innerHTML = `<strong>Why this entry:</strong> ${escapeHtml(draft.justification || "(No justification provided)")}`;
+    }
+    if (chatPreview) chatPreview.style.display = "block";
+  }
+
+  function renderChatRevisionHistory(history = []) {
+    if (!chatHistory) return;
+    if (history.length === 0) {
+      chatHistory.innerHTML = "";
+      return;
+    }
+    chatHistory.innerHTML = `<strong>Draft session</strong>${history
+      .map(
+        (item) =>
+          `<div class="lm-chat-history-item"><span>You:</span> ${escapeHtml(item.instruction)}<br><span>AI:</span> ${escapeHtml(item.justification)}</div>`,
+      )
+      .join("")}`;
+  }
+
+  function rememberChatDraft(draft, history = []) {
+    sessionCache.chatDraft = {
+      bookName: currentBookName,
+      start: Number(chatStartInput?.value),
+      end: Number(chatEndInput?.value),
+      instructions: chatInstructions?.value || "",
+      ...draft,
+      history,
+    };
+    renderChatRevisionHistory(history);
+  }
+
   // Generate a proposed new entry, but leave every field editable until the
   // user explicitly chooses Add to Lorebook.
   chatGenerateBtn?.addEventListener("click", async () => {
@@ -371,15 +433,8 @@ export async function openMainPopup(settings, context) {
         settings.connectionProfileId || null,
       );
 
-      if (chatTitleInput) chatTitleInput.value = result.title;
-      if (chatKeysInput) chatKeysInput.value = result.primaryKeys.join(", ");
-      if (chatSecondaryInput)
-        chatSecondaryInput.value = result.secondaryKeys.join(", ");
-      if (chatContentInput) chatContentInput.value = result.content;
-      if (chatJustification) {
-        chatJustification.innerHTML = `<strong>Why this entry:</strong> ${escapeHtml(result.justification)}`;
-      }
-      if (chatPreview) chatPreview.style.display = "block";
+      rememberChatDraft(result);
+      renderChatDraft(result);
       showStatus(
         chatStatus,
         "Entry draft ready. Edit anything you want, then Add to Lorebook.",
@@ -390,6 +445,54 @@ export async function openMainPopup(settings, context) {
       showFriendlyError(chatStatus, e);
     } finally {
       chatGenerateBtn.disabled = false;
+    }
+  });
+
+  // Continue a draft session with a user-directed revision grounded in the
+  // same source-message range. Any manual field edits are included too.
+  chatRefineBtn?.addEventListener("click", async () => {
+    if (!currentBookName) return;
+    try {
+      const instruction = chatRefineInput?.value || "";
+      const messages = getSelectedChatMessages();
+      const draft = readChatDraftFromInputs();
+      showStatus(
+        chatStatus,
+        "Revising draft from the selected messages...",
+        "loading",
+      );
+      chatRefineBtn.disabled = true;
+
+      const result = await reviseChatEntryDraft(
+        messages,
+        draft,
+        instruction,
+        settings.maxTokens,
+        context,
+        settings.connectionProfileId || null,
+      );
+      const history = [
+        ...(sessionCache.chatDraft?.bookName === currentBookName
+          ? sessionCache.chatDraft.history || []
+          : []),
+        { instruction, justification: result.justification },
+      ];
+      rememberChatDraft(result, history);
+      renderChatDraft(result);
+      if (chatRefineInput) chatRefineInput.value = "";
+      showStatus(
+        chatStatus,
+        "Draft revised. Keep refining, edit it by hand, or Add to Lorebook.",
+        "success",
+      );
+    } catch (e) {
+      console.error(
+        "[LorebookManipulator] Chat-range draft revision failed:",
+        e,
+      );
+      showFriendlyError(chatStatus, e);
+    } finally {
+      chatRefineBtn.disabled = false;
     }
   });
 
@@ -413,6 +516,8 @@ export async function openMainPopup(settings, context) {
       const uid = await createEntry(currentBookName, fields, context);
 
       if (chatPreview) chatPreview.style.display = "none";
+      sessionCache.chatDraft = null;
+      renderChatRevisionHistory();
       toastr.success(`Created entry #${uid}.`);
       showStatus(
         chatStatus,
@@ -571,6 +676,27 @@ export async function openMainPopup(settings, context) {
       if (chatEndInput) {
         chatEndInput.max = String(chatCount - 1);
         if (!chatEndInput.value) chatEndInput.value = String(chatCount - 1);
+      }
+
+      // Restore an unfinished draft only for the lorebook it belongs to.
+      const savedDraft = sessionCache.chatDraft;
+      if (
+        savedDraft?.bookName === bookName &&
+        Number.isInteger(savedDraft.start) &&
+        Number.isInteger(savedDraft.end) &&
+        savedDraft.start >= 0 &&
+        savedDraft.end >= savedDraft.start &&
+        savedDraft.end < chatCount
+      ) {
+        if (chatStartInput) chatStartInput.value = String(savedDraft.start);
+        if (chatEndInput) chatEndInput.value = String(savedDraft.end);
+        if (chatInstructions)
+          chatInstructions.value = savedDraft.instructions || "";
+        renderChatDraft(savedDraft);
+        renderChatRevisionHistory(savedDraft.history || []);
+      } else if (chatPreview) {
+        chatPreview.style.display = "none";
+        renderChatRevisionHistory();
       }
     }
 

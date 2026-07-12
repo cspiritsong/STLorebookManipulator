@@ -114,6 +114,7 @@ We benchmarked against the [World Info Recommender](https://github.com/bmen25124
 
 **Bucket C — different use case (selectively adopted)**
 - [x] Create one new entry from an explicit chat-message range — *Implemented in unreleased; JSON schema + manual approval, not XML*
+- [x] Revise a chat-range draft with follow-up instructions — *Implemented in unreleased; keeps user edits and source-range grounding*
 - [ ] General chat-aware context for arbitrary suggestions
 - [ ] Streaming responses
 

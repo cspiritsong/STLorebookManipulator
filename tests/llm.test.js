@@ -1,7 +1,9 @@
 import {
+  generateEntryFromChat,
   parseChatEntryResponse,
   parseLLMResponse,
   normalizeLLMContent,
+  reviseChatEntryDraft,
 } from "../src/llm.js";
 
 let passed = 0;
@@ -247,6 +249,67 @@ assertThrows(
       '{"title":"Test","content":"","primaryKeys":[],"secondaryKeys":[],"justification":"x"}',
     ),
   "Throws when generated chat-entry content is empty",
+);
+
+console.log("\n=== Chat Range Generation Request Tests ===\n");
+
+const chatCalls = [];
+const chatContext = {
+  generateRaw: async (request) => {
+    chatCalls.push(request);
+    return JSON.stringify({
+      title: "Chat Fact",
+      primaryKeys: ["Vanessa"],
+      secondaryKeys: [],
+      content: "Vanessa learned a durable fact.",
+      justification: "Derived from the selected messages.",
+    });
+  },
+};
+const sourceMessages = [
+  { index: 4, is_user: true, name: "User", mes: "Vanessa found the fragment." },
+  {
+    index: 5,
+    is_user: false,
+    name: "Vanessa",
+    mes: "The fragment amplifies my gift.",
+  },
+];
+const generatedFromChat = await generateEntryFromChat(
+  sourceMessages,
+  "Capture the discovery.",
+  512,
+  chatContext,
+);
+assert(
+  generatedFromChat.title === "Chat Fact",
+  "Generates a structured entry from chat messages",
+);
+assert(
+  chatCalls[0].prompt.includes("Message #4 | User") &&
+    chatCalls[0].prompt.includes("Message #5 | Vanessa"),
+  "Chat generation includes indexed source messages",
+);
+assert(
+  chatCalls[0].jsonSchema.name === "ChatRangeLorebookEntry",
+  "Chat generation uses the dedicated JSON schema",
+);
+
+const revisedFromChat = await reviseChatEntryDraft(
+  sourceMessages,
+  generatedFromChat,
+  "Make it shorter.",
+  512,
+  chatContext,
+);
+assert(
+  revisedFromChat.content === "Vanessa learned a durable fact.",
+  "Revises a chat-derived draft",
+);
+assert(
+  chatCalls[1].prompt.includes("## Current Draft") &&
+    chatCalls[1].prompt.includes("Make it shorter."),
+  "Draft revision includes current draft and follow-up instruction",
 );
 
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);

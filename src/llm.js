@@ -22,6 +22,44 @@ const REWRITE_SCHEMA = {
   },
 };
 
+// Schema for creating or revising one new lorebook entry from an explicit
+// chat-message range. It is distinct from REWRITE_SCHEMA so a chat draft can
+// never be mistaken for a rewrite of an existing entry.
+const CHAT_ENTRY_SCHEMA = {
+  name: "ChatRangeLorebookEntry",
+  strict: true,
+  value: {
+    $schema: "http://json-schema.org/draft-04/schema#",
+    type: "object",
+    properties: {
+      title: {
+        type: "string",
+        description: "A concise title or memo for the new lorebook entry.",
+      },
+      primaryKeys: {
+        type: "array",
+        description: "Specific activation keys for the entry.",
+        items: { type: "string" },
+      },
+      secondaryKeys: {
+        type: "array",
+        description: "Optional secondary activation keys for the entry.",
+        items: { type: "string" },
+      },
+      content: {
+        type: "string",
+        description: "Concise factual lorebook content derived from the chat range.",
+      },
+      justification: {
+        type: "string",
+        description: "Brief explanation of which facts were captured.",
+      },
+    },
+    required: ["title", "primaryKeys", "secondaryKeys", "content", "justification"],
+    additionalProperties: false,
+  },
+};
+
 // Schema for a whole-book review. Returns a list of issues, each referencing
 // the affected entries by uid + name so the UI can map an issue back to a
 // concrete entry for the existing rewrite flow.
@@ -401,6 +439,83 @@ Create one new lorebook entry from this range. Return title, primaryKeys, second
       "[LorebookManipulator] Chat-range entry generation failed:",
       e,
     );
+    throw new Error(
+      `LLM request failed: ${e.message}. Check your API connection and try again.`,
+    );
+  }
+}
+
+// Revise a generated chat-range draft without losing its grounding in the
+// source messages. The caller owns the editable draft and only applies it
+// after explicit approval.
+export async function reviseChatEntryDraft(
+  messages,
+  draft,
+  instructions,
+  maxTokens,
+  context,
+  profileId = null,
+) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    throw new Error(
+      "Choose at least one non-system chat message to revise this draft.",
+    );
+  }
+  if (!draft || typeof draft.content !== "string" || !draft.content.trim()) {
+    throw new Error(
+      "Generate or enter a draft before asking the AI to revise it.",
+    );
+  }
+  if (!instructions || !instructions.trim()) {
+    throw new Error("Describe how you want the draft revised.");
+  }
+
+  const chatText = messages
+    .map((message) => {
+      const number = Number.isInteger(message.index) ? `#${message.index}` : "";
+      const speaker = message.name || (message.is_user ? "User" : "Character");
+      return `--- Message ${number} | ${speaker} ---\n${message.mes || ""}`;
+    })
+    .join("\n\n");
+
+  const systemPrompt = `You revise a draft lorebook entry that was created from an explicit SillyTavern chat-message range.
+
+RULES:
+- Follow the user's revision instruction, but use ONLY facts established in the supplied source messages.
+- Preserve factual content from the current draft unless the user explicitly asks to remove it or it is unsupported by the source messages.
+- Never invent details, motives, names, or outcomes.
+- Keep primary keys specific; avoid broad common words such as "the world", "powers", "war", or "current status" unless explicitly requested.
+- Return ONLY valid JSON matching the required schema.`;
+
+  const userPrompt = `## Source Chat Messages
+${chatText}
+
+## Current Draft
+Title: ${draft.title || "(untitled)"}
+Primary Keys: ${(draft.primaryKeys || []).join(", ") || "(none)"}
+Secondary Keys: ${(draft.secondaryKeys || []).join(", ") || "(none)"}
+Content:
+${draft.content}
+
+## Revision Instruction
+${instructions.trim()}
+
+Revise the draft. Return title, primaryKeys, secondaryKeys, content, and justification as JSON.`;
+
+  try {
+    const result = await callLLM(
+      {
+        systemPrompt,
+        prompt: userPrompt,
+        responseLength: maxTokens || 1024,
+        jsonSchema: CHAT_ENTRY_SCHEMA,
+        profileId,
+      },
+      context,
+    );
+    return parseChatEntryResponse(result);
+  } catch (e) {
+    console.error("[LorebookManipulator] Chat-range draft revision failed:", e);
     throw new Error(
       `LLM request failed: ${e.message}. Check your API connection and try again.`,
     );
