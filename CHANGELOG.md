@@ -14,11 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Chat-range draft revision**: generated drafts now support a follow-up revise session. Tell the AI how to change the live draft, review each revised version, and keep refining before adding it. Unfinished drafts and their revision notes survive closing/reopening the popup for the same lorebook.
 - **Ignore review issue**: each issue now has an Ignore action. Ignored issue fingerprints are stored per lorebook and filtered from future reviews.
 - **`/lm-chat` slash command**: `/lm-chat <start> <end> [instructions]` opens the popup with an inclusive 0-based chat range prefilled for Create from Chat Range.
+- **Multi-lorebook review**: choose Review Multiple Books, select lorebooks, and receive one combined issue list. Every issue displays its source lorebook; reviews remain independent per book so UIDs never collide.
 
 ### Changed
 - **Rate-limit resilience**: every LLM request now retries transient failures (rate limits, proxy hiccups, network blips) with exponential backoff (up to 3 attempts). Auth and context-length errors are not retried (retrying wouldn't help).
 - **Request pacing**: whole-book review and Apply All now pace requests (~600ms between batches/issues) so a large book doesn't fire many calls back-to-back and trip the provider's rate limit.
 - **Cancellable review**: the review panel now has Cancel Review. Connection-profile calls abort immediately; active-connection calls use SillyTavern's generation stop and then retain any completed-batch results.
+- **Multi-lorebook Apply All safety**: bulk fixes now create one backup per affected book and only resolve entries within that issue's source book.
 
 ## [0.8.0] - 2026-06-06
 

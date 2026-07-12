@@ -68,6 +68,7 @@ export function filterEntries(entries, searchText) {
 export function computeCascadeFixedIssues(fixedIssue, allIssues, alreadyFixed) {
   const result = new Set(alreadyFixed);
   result.add(fixedIssue);
+  const fixedBookName = fixedIssue.bookName || "";
 
   const fixedUids = new Set(
     fixedIssue.entries.map((e) => e.uid).filter((uid) => uid !== null),
@@ -76,6 +77,9 @@ export function computeCascadeFixedIssues(fixedIssue, allIssues, alreadyFixed) {
   if (fixedUids.size > 0) {
     for (const otherIssue of allIssues) {
       if (result.has(otherIssue)) continue;
+      // UIDs are only unique inside a lorebook. Never cascade from Book A
+      // uid 5 to Book B uid 5.
+      if ((otherIssue.bookName || "") !== fixedBookName) continue;
       const otherUids = otherIssue.entries.map((e) => e.uid);
       if (otherUids.some((uid) => fixedUids.has(uid))) {
         result.add(otherIssue);
@@ -99,6 +103,7 @@ const sessionCache = {
   instructions: "",
   review: null,
   fixedIssues: new Set(),
+  entriesByBook: new Map(),
   // Active chat-range draft survives an accidental Close/reopen for the same
   // lorebook. It stays in memory only; Add to Lorebook is still explicit.
   chatDraft: null,
@@ -131,6 +136,9 @@ export async function openMainPopup(
                     placeholder="Optional: tell the AI what to focus on (e.g. 'find duplicate lore' or 'flag contradictions'). Leave blank for a general review."></textarea>
                 <button type="button" id="lm_review_btn" class="menu_button menu_button_icon">
                     <i class="fa-solid fa-magnifying-glass"></i> Review &amp; Recommend Fixes
+                </button>
+                <button type="button" id="lm_multi_review_btn" class="menu_button menu_button_icon">
+                    <i class="fa-solid fa-books"></i> Review Multiple Books
                 </button>
                 <button type="button" id="lm_review_cancel" class="menu_button menu_button_icon" style="display:none;">
                     <i class="fa-solid fa-ban"></i> Cancel Review
@@ -231,6 +239,7 @@ export async function openMainPopup(
   const searchInput = container.querySelector("#lm_entry_search");
   const reviewSection = container.querySelector("#lm_review_section");
   const reviewBtn = container.querySelector("#lm_review_btn");
+  const multiReviewBtn = container.querySelector("#lm_multi_review_btn");
   const reviewCancelBtn = container.querySelector("#lm_review_cancel");
   const reviewInstructions = container.querySelector("#lm_review_instructions");
   const reviewStatus = container.querySelector("#lm_review_status");
@@ -664,6 +673,7 @@ export async function openMainPopup(
     const entries = await loadLorebook(bookName, context);
     currentEntries = entries;
     currentBookName = bookName;
+    sessionCache.entriesByBook.set(bookName, entries);
 
     reviewSection.style.display = entries.length > 0 ? "block" : "none";
 
@@ -782,7 +792,7 @@ export async function openMainPopup(
     // Confirm before making sweeping changes
     const confirmed = await context.Popup.show.confirm(
       "Apply All Fixes",
-      `Apply fixes for ${unresolved.length} issue(s)? Each will be rewritten or deleted according to the review's recommendations.\n\nA backup of the current book will be created before any changes.`,
+      `Apply fixes for ${unresolved.length} issue(s)? Each will be rewritten or deleted according to the review's recommendations.\n\nOne backup per affected lorebook will be created before its first change.`,
     );
     if (!confirmed) return;
 
@@ -792,12 +802,9 @@ export async function openMainPopup(
       "loading",
     );
 
-    // Create one backup up-front
-    const bookData = await context.loadWorldInfo(currentBookName);
-    createBackup(currentBookName, bookData, settings.backupRetention);
-
     let successCount = 0;
     let failCount = 0;
+    const backedUpBooks = new Set();
     const newFixed = new Set(sessionCache.fixedIssues); // start with already-fixed
 
     const instructions = sessionCache.instructions || "";
@@ -812,10 +819,18 @@ export async function openMainPopup(
       );
 
       try {
+        const issueBookName = issue.bookName || currentBookName;
+        const issueEntries =
+          sessionCache.entriesByBook.get(issueBookName) || currentEntries;
+        if (!backedUpBooks.has(issueBookName)) {
+          const bookData = await context.loadWorldInfo(issueBookName);
+          createBackup(issueBookName, bookData, settings.backupRetention);
+          backedUpBooks.add(issueBookName);
+        }
         if (issue.entries.length === 1) {
           // Single-entry fix: rewrite content
           const entryUid = issue.entries[0].uid;
-          const entryObj = currentEntries.find((e) => e.uid === entryUid);
+          const entryObj = issueEntries.find((e) => e.uid === entryUid);
           if (!entryObj) {
             console.warn(`[ApplyAll] Entry ${entryUid} not found, skipping`);
             continue;
@@ -830,16 +845,16 @@ export async function openMainPopup(
             settings.connectionProfileId || null,
           );
           await updateEntryFields(
-            currentBookName,
+            issueBookName,
             entryUid,
             { content: rewrite.rewrittenContent },
             context,
           );
         } else {
           // Multi-entry fix: create a plan and apply all actions
-          // Resolve which entries from currentEntries are actually affected
+          // Resolve only entries from this issue's own lorebook.
           const affectedEntries = issue.entries
-            .map((e) => currentEntries.find((en) => en.uid === e.uid))
+            .map((e) => issueEntries.find((en) => en.uid === e.uid))
             .filter(Boolean);
 
           if (affectedEntries.length === 0) {
@@ -869,14 +884,14 @@ export async function openMainPopup(
 
           for (const a of rewrites) {
             await updateEntryFields(
-              currentBookName,
+              issueBookName,
               a.uid,
               { content: a.newContent },
               context,
             );
           }
           for (const a of deletes) {
-            await deleteEntry(currentBookName, a.uid, context);
+            await deleteEntry(issueBookName, a.uid, context);
           }
         }
 
@@ -911,7 +926,12 @@ export async function openMainPopup(
       if (
         uids.some((uid) => {
           for (const fixedIssue of finalFixed) {
-            if (fixedIssue.entries.some((fe) => fe.uid === uid)) return true;
+            if (
+              (fixedIssue.bookName || currentBookName) ===
+                (issue.bookName || currentBookName) &&
+              fixedIssue.entries.some((fe) => fe.uid === uid)
+            )
+              return true;
           }
           return false;
         })
@@ -996,7 +1016,11 @@ export async function openMainPopup(
   // generated instead of a blank panel.
   function showReview(reviewData) {
     const { issues, batchCount, skippedBatches } = reviewData;
-    const visibleIssues = filterIgnoredIssues(currentBookName, issues);
+    const visibleIssues = issues.filter(
+      (issue) =>
+        filterIgnoredIssues(issue.bookName || currentBookName, [issue]).length >
+        0,
+    );
     const ignoredCount = issues.length - visibleIssues.length;
 
     const skipNote =
@@ -1050,7 +1074,7 @@ export async function openMainPopup(
         // Single-entry issue → open the editor on top; on success mark fixed.
         openRewritePopup(
           entry,
-          currentBookName,
+          issue.bookName || currentBookName,
           settings,
           context,
           issue,
@@ -1063,19 +1087,20 @@ export async function openMainPopup(
         openResolvePopup(
           issue,
           affectedEntries,
-          currentBookName,
+          issue.bookName || currentBookName,
           settings,
           context,
           () => markFixed(issue),
         );
       },
       (issue) => {
-        ignoreIssue(currentBookName, issue);
+        ignoreIssue(issue.bookName || currentBookName, issue);
         toastr.success(
           "Issue ignored for this lorebook. It will not appear in future reviews.",
         );
         showReview(reviewData);
       },
+      sessionCache.entriesByBook,
     );
 
     // Add "Apply All Fixes" button for bulk resolution
@@ -1112,6 +1137,122 @@ export async function openMainPopup(
       "loading",
     );
     reviewCancelBtn.disabled = true;
+  });
+
+  async function runMultiBookReview(bookNames) {
+    const selectedBooks = [...new Set(bookNames)].filter(Boolean);
+    if (selectedBooks.length === 0) return;
+
+    try {
+      reviewBtn.disabled = true;
+      multiReviewBtn.disabled = true;
+      reviewController = new AbortController();
+      if (reviewCancelBtn) {
+        reviewCancelBtn.disabled = false;
+        reviewCancelBtn.style.display = "inline-block";
+      }
+      issueListEl.innerHTML = "";
+      showStatus(
+        reviewStatus,
+        `Loading ${selectedBooks.length} lorebook(s)...`,
+        "loading",
+      );
+
+      const aggregate = {
+        issues: [],
+        batchCount: 0,
+        skippedBatches: 0,
+        cancelled: false,
+      };
+      sessionCache.entriesByBook = new Map();
+
+      for (let bookIndex = 0; bookIndex < selectedBooks.length; bookIndex++) {
+        if (reviewController.signal.aborted) {
+          aggregate.cancelled = true;
+          break;
+        }
+        const bookName = selectedBooks[bookIndex];
+        const entries = await loadLorebook(bookName, context);
+        sessionCache.entriesByBook.set(bookName, entries);
+        if (entries.length === 0) continue;
+
+        const review = await reviewEntries(
+          entries,
+          reviewInstructions.value,
+          settings.maxTokens,
+          context,
+          {
+            profileId: settings.connectionProfileId || null,
+            maxBatchChars: settings.reviewBatchBudget,
+            signal: reviewController.signal,
+            onProgress: (current, total) => {
+              showStatus(
+                reviewStatus,
+                `Reviewing ${bookIndex + 1}/${selectedBooks.length}: ${bookName} (batch ${current}/${total})`,
+                "loading",
+              );
+            },
+          },
+        );
+        aggregate.issues.push(
+          ...review.issues.map((issue) => ({ ...issue, bookName })),
+        );
+        aggregate.batchCount += review.batchCount;
+        aggregate.skippedBatches += review.skippedBatches;
+        if (review.cancelled) {
+          aggregate.cancelled = true;
+          break;
+        }
+      }
+
+      sessionCache.review = aggregate;
+      sessionCache.fixedIssues = new Set();
+      showReview(aggregate);
+      if (aggregate.cancelled) {
+        showStatus(
+          reviewStatus,
+          "Multi-lorebook review cancelled. Completed-book results were kept.",
+          "success",
+        );
+      }
+    } catch (e) {
+      console.error("[LorebookManipulator] Multi-lorebook review failed:", e);
+      showFriendlyError(reviewStatus, e);
+    } finally {
+      reviewController = null;
+      reviewBtn.disabled = false;
+      multiReviewBtn.disabled = false;
+      if (reviewCancelBtn) {
+        reviewCancelBtn.style.display = "none";
+        reviewCancelBtn.disabled = false;
+      }
+    }
+  }
+
+  multiReviewBtn?.addEventListener("click", () => {
+    const checks = bookNames
+      .map(
+        (name) =>
+          `<label><input type="checkbox" value="${escapeAttr(name)}" ${name === currentBookName ? "checked" : ""}> ${escapeHtml(name)}</label>`,
+      )
+      .join("<br>");
+    const popup = new Popup(
+      `<div class="lm-multi-review-popup"><h3>Review Multiple Lorebooks</h3><p>Select books to review independently. Results stay book-scoped, so entries with the same UID in different books are never mixed.</p><div class="lm-multi-review-checks">${checks}</div><div class="lm-popup-actions"><button type="button" id="lm_multi_review_start" class="menu_button">Review Selected Books</button></div></div>`,
+      POPUP_TYPE.TEXT,
+      "",
+      { okButton: false, cancelButton: "Cancel", allowVerticalScrolling: true },
+    );
+    popup.show();
+    const picker = document.querySelector(".lm-multi-review-popup");
+    picker
+      ?.querySelector("#lm_multi_review_start")
+      ?.addEventListener("click", () => {
+        const names = [...picker.querySelectorAll("input:checked")].map(
+          (input) => input.value,
+        );
+        popup.completeCancelled();
+        runMultiBookReview(names);
+      });
   });
 
   reviewBtn?.addEventListener("click", async () => {
@@ -1253,12 +1394,16 @@ function renderIssueList(
   onFixClick,
   onResolveClick,
   onIgnoreClick,
+  entriesByBook = null,
 ) {
   container.innerHTML = "";
 
-  const byUid = new Map(entries.map((e) => [e.uid, e]));
-
   for (const issue of issues) {
+    const issueEntries =
+      issue.bookName && entriesByBook?.get(issue.bookName)
+        ? entriesByBook.get(issue.bookName)
+        : entries;
+    const byUid = new Map(issueEntries.map((e) => [e.uid, e]));
     const isFixed = fixedIssues && fixedIssues.has(issue);
     const card = document.createElement("div");
     card.className = `lm-issue-card lm-issue-${issue.severity}${isFixed ? " lm-issue-fixed" : ""}`;
@@ -1276,6 +1421,13 @@ function renderIssueList(
     desc.className = "lm-issue-desc";
     desc.textContent = issue.description;
     card.appendChild(desc);
+
+    if (issue.bookName) {
+      const source = document.createElement("div");
+      source.className = "lm-issue-source";
+      source.textContent = `Lorebook: ${issue.bookName}`;
+      card.appendChild(source);
+    }
 
     if (typeof onIgnoreClick === "function") {
       const ignoreBtn = document.createElement("button");

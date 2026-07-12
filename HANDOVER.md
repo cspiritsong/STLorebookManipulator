@@ -103,14 +103,14 @@ We benchmarked against the [World Info Recommender](https://github.com/bmen25124
 **Bucket A — directly serves tidy/prune (high value)**
 - [x] Edit keys/triggers/title (not just content)
 - [x] Delete entries
-- [x] Multi-lorebook view (one book at a time currently)
+- [x] Multi-lorebook review — *Implemented in unreleased; books are reviewed independently and aggregated safely*
 - [x] **Apply All** for review fixes (bulk apply across issues) — *Implemented in unreleased*
 - [x] Connection profile selection
 
 **Bucket B — power-user / automation**
-- [ ] Slash commands / headless run
+- [x] `/lm-chat` slash command for prefilled chat-range entry drafts — *Implemented in unreleased*
 - [ ] Savable prompt presets (currently: presets + custom, but not persisted as named presets)
-- [ ] Blacklist (don't re-flag this issue)
+- [x] Per-lorebook issue blacklist — *Implemented in unreleased*
 
 **Bucket C — different use case (selectively adopted)**
 - [x] Create one new entry from an explicit chat-message range — *Implemented in unreleased; JSON schema + manual approval, not XML*
