@@ -48,14 +48,21 @@ const CHAT_ENTRY_SCHEMA = {
       },
       content: {
         type: "string",
-        description: "Concise factual lorebook content derived from the chat range.",
+        description:
+          "Concise factual lorebook content derived from the chat range.",
       },
       justification: {
         type: "string",
         description: "Brief explanation of which facts were captured.",
       },
     },
-    required: ["title", "primaryKeys", "secondaryKeys", "content", "justification"],
+    required: [
+      "title",
+      "primaryKeys",
+      "secondaryKeys",
+      "content",
+      "justification",
+    ],
     additionalProperties: false,
   },
 };
@@ -284,9 +291,12 @@ async function callLLM(args, context, maxRetries = 2) {
 // Send one structured request, routing through a chosen connection profile
 // when `profileId` is set, otherwise through the active connection.
 async function callLLMOnce(
-  { systemPrompt, prompt, responseLength, jsonSchema, profileId },
+  { systemPrompt, prompt, responseLength, jsonSchema, profileId, signal },
   context,
 ) {
+  if (signal?.aborted) {
+    throw new Error("Request cancelled.");
+  }
   // Route through a specific connection profile.
   if (profileId) {
     const service = context.ConnectionManagerRequestService;
@@ -307,7 +317,7 @@ async function callLLMOnce(
       profileId,
       messages,
       responseLength,
-      { extractData: true },
+      { extractData: true, signal },
       overridePayload,
     );
     return normalizeLLMContent(result);
@@ -579,10 +589,12 @@ export async function reviewEntries(
   const onProgress =
     typeof options.onProgress === "function" ? options.onProgress : null;
   const profileId = options.profileId || null;
+  const signal = options.signal || null;
 
   const batches = batchEntries(entries, maxBatchChars);
   const allIssues = [];
   let skippedBatches = 0; // batches whose reply couldn't be read, even after a retry
+  let cancelled = false;
 
   const systemPrompt = `You are a lorebook auditor. You review SillyTavern lorebook entries and identify issues that could be improved.
 
@@ -604,6 +616,10 @@ RULES:
     'Your previous reply could not be read. Respond with ONLY a JSON object of this exact shape, nothing else: {"issues": [{"type": "duplicate|overlap|verbose|contradiction|other", "severity": "low|medium|high", "description": "...", "entries": [{"uid": <number>, "name": "..."}]}]}. If there are no issues, reply exactly {"issues": []}.';
 
   for (let i = 0; i < batches.length; i++) {
+    if (signal?.aborted) {
+      cancelled = true;
+      break;
+    }
     if (onProgress) onProgress(i + 1, batches.length);
 
     const batch = batches[i];
@@ -637,18 +653,25 @@ Report issues as JSON with an "issues" array. Reference each affected entry by i
             responseLength: maxTokens || 2048,
             jsonSchema: REVIEW_SCHEMA,
             profileId,
+            signal,
           },
           context,
         );
 
         parsed = parseReviewResponse(result);
       } catch (e) {
+        if (signal?.aborted) {
+          cancelled = true;
+          break;
+        }
         console.error(
           `[LorebookManipulator] Review batch ${i + 1}/${batches.length} attempt ${attempt + 1} failed:`,
           e,
         );
       }
     }
+
+    if (cancelled) break;
 
     if (parsed === null) {
       skippedBatches++;
@@ -666,13 +689,18 @@ Report issues as JSON with an "issues" array. Reference each affected entry by i
   }
 
   // Only treat the whole review as failed if EVERY batch was unreadable.
-  if (skippedBatches === batches.length) {
+  if (!cancelled && skippedBatches === batches.length) {
     throw new Error(
       "Could not parse LLM response as JSON. The model may not support structured output. Try a more capable model or raise Max Response Tokens.",
     );
   }
 
-  return { issues: allIssues, batchCount: batches.length, skippedBatches };
+  return {
+    issues: allIssues,
+    batchCount: batches.length,
+    skippedBatches,
+    cancelled,
+  };
 }
 
 // ── Resolve a single issue across its affected entries ───────────────────

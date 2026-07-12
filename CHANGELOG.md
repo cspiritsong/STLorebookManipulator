@@ -12,10 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Friendly error for generic API failures**: "API request failed" / empty-cause errors now explain likely causes (rate limiting after a burst, oversized request, proxy hiccup) and how to recover.
 - **Create from Chat Range**: select a target lorebook, enter inclusive 0-based start/end message numbers from the current chat, and generate one structured entry draft. Title, keys, secondary keys, and content remain editable before the backup-protected Add to Lorebook action.
 - **Chat-range draft revision**: generated drafts now support a follow-up revise session. Tell the AI how to change the live draft, review each revised version, and keep refining before adding it. Unfinished drafts and their revision notes survive closing/reopening the popup for the same lorebook.
+- **Ignore review issue**: each issue now has an Ignore action. Ignored issue fingerprints are stored per lorebook and filtered from future reviews.
+- **`/lm-chat` slash command**: `/lm-chat <start> <end> [instructions]` opens the popup with an inclusive 0-based chat range prefilled for Create from Chat Range.
 
 ### Changed
 - **Rate-limit resilience**: every LLM request now retries transient failures (rate limits, proxy hiccups, network blips) with exponential backoff (up to 3 attempts). Auth and context-length errors are not retried (retrying wouldn't help).
 - **Request pacing**: whole-book review and Apply All now pace requests (~600ms between batches/issues) so a large book doesn't fire many calls back-to-back and trip the provider's rate limit.
+- **Cancellable review**: the review panel now has Cancel Review. Connection-profile calls abort immediately; active-connection calls use SillyTavern's generation stop and then retain any completed-batch results.
 
 ## [0.8.0] - 2026-06-06
 

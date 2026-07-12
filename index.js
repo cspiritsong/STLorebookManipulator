@@ -6,7 +6,12 @@ import {
   getBackupStorageUsage,
   clearAllBackups,
 } from "./src/backup.js";
-import { openRewritePopup, openMainPopup, getPromptText, filterEntries } from "./src/ui.js";
+import {
+  openRewritePopup,
+  openMainPopup,
+  getPromptText,
+  filterEntries,
+} from "./src/ui.js";
 import { escapeHtml, escapeAttr } from "./src/utils.js";
 
 const MODULE_NAME = "lorebook_manipulator";
@@ -23,6 +28,7 @@ const DEFAULT_SETTINGS = Object.freeze({
 
 let currentBookName = null;
 let currentEntries = [];
+let slashCommandRegistered = false;
 
 jQuery(async () => {
   const context = SillyTavern.getContext();
@@ -97,8 +103,78 @@ jQuery(async () => {
     context.saveSettingsDebounced();
   });
 
+  registerChatRangeSlashCommand(context);
   observeForQuickAccessButtons();
 });
+
+function registerChatRangeSlashCommand(context) {
+  if (slashCommandRegistered) return;
+  const {
+    SlashCommandParser,
+    SlashCommand,
+    SlashCommandArgument,
+    ARGUMENT_TYPE,
+  } = context;
+  if (
+    !SlashCommandParser ||
+    !SlashCommand ||
+    !SlashCommandArgument ||
+    !ARGUMENT_TYPE
+  ) {
+    console.warn("[LorebookManipulator] Slash-command API is unavailable.");
+    return;
+  }
+
+  SlashCommandParser.addCommandObject(
+    SlashCommand.fromProps({
+      name: "lm-chat",
+      helpString:
+        "Open Lorebook Manipulator with a chat range prefilled. Usage: /lm-chat <start> <end> [instructions]",
+      splitUnnamedArgument: true,
+      splitUnnamedArgumentCount: 2,
+      unnamedArgumentList: [
+        SlashCommandArgument.fromProps({
+          description: "0-based starting message index",
+          typeList: [ARGUMENT_TYPE.NUMBER],
+          isRequired: true,
+        }),
+        SlashCommandArgument.fromProps({
+          description: "0-based ending message index (inclusive)",
+          typeList: [ARGUMENT_TYPE.NUMBER],
+          isRequired: true,
+        }),
+        SlashCommandArgument.fromProps({
+          description: "Optional instruction for the entry draft",
+          typeList: [ARGUMENT_TYPE.STRING],
+          isRequired: false,
+        }),
+      ],
+      callback: async (_args, [startText, endText, instructions = ""]) => {
+        const start = Number(startText);
+        const end = Number(endText);
+        const chatLength = Array.isArray(context.chat)
+          ? context.chat.length
+          : 0;
+        if (
+          !Number.isInteger(start) ||
+          !Number.isInteger(end) ||
+          start < 0 ||
+          end < start ||
+          end >= chatLength
+        ) {
+          return `Invalid chat range. Choose inclusive indexes from 0 to ${Math.max(0, chatLength - 1)}.`;
+        }
+        openMainPopup(getSettings(context), context, {
+          start,
+          end,
+          instructions,
+        });
+        return `Opened Lorebook Manipulator with messages #${start} through #${end} selected.`;
+      },
+    }),
+  );
+  slashCommandRegistered = true;
+}
 
 function getSettings(context) {
   if (!context.extensionSettings[MODULE_NAME]) {

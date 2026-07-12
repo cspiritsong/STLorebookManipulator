@@ -15,6 +15,7 @@ const tests = [
   "resolve.test.js",
   "diff.test.js",
   "backup.test.js",
+  "issue-blacklist.test.js",
   "lorebook.test.js",
   "ui-utils.test.js",
 ];

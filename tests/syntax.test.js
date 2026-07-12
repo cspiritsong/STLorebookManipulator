@@ -33,6 +33,7 @@ const files = [
   "src/llm.js",
   "src/diff.js",
   "src/backup.js",
+  "src/issue-blacklist.js",
   "src/utils.js",
 ];
 

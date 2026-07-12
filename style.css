@@ -100,6 +100,12 @@
     font-weight: bold;
 }
 
+.lm-issue-ignore {
+    margin-top: 8px;
+    font-size: 0.85em;
+    color: var(--SmartThemeSubtleColor, #aaa);
+}
+
 @media (max-width: 800px) {
     .lm-popup-layout {
         flex-direction: column;

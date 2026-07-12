@@ -17,6 +17,7 @@ import {
 } from "./lorebook.js";
 import { escapeHtml, escapeAttr } from "./utils.js";
 import { renderFriendlyError } from "./errors.js";
+import { filterIgnoredIssues, ignoreIssue } from "./issue-blacklist.js";
 
 const PROMPT_PRESETS = {
   prune:
@@ -103,7 +104,11 @@ const sessionCache = {
   chatDraft: null,
 };
 
-export async function openMainPopup(settings, context) {
+export async function openMainPopup(
+  settings,
+  context,
+  chatRangeRequest = null,
+) {
   const { Popup, POPUP_TYPE } = context;
 
   const bookNames = getLorebookNames(context);
@@ -126,6 +131,9 @@ export async function openMainPopup(settings, context) {
                     placeholder="Optional: tell the AI what to focus on (e.g. 'find duplicate lore' or 'flag contradictions'). Leave blank for a general review."></textarea>
                 <button type="button" id="lm_review_btn" class="menu_button menu_button_icon">
                     <i class="fa-solid fa-magnifying-glass"></i> Review &amp; Recommend Fixes
+                </button>
+                <button type="button" id="lm_review_cancel" class="menu_button menu_button_icon" style="display:none;">
+                    <i class="fa-solid fa-ban"></i> Cancel Review
                 </button>
                 <div id="lm_review_status" class="lm-status"></div>
                 <div id="lm_issue_list" class="lm-issue-list"></div>
@@ -223,6 +231,7 @@ export async function openMainPopup(settings, context) {
   const searchInput = container.querySelector("#lm_entry_search");
   const reviewSection = container.querySelector("#lm_review_section");
   const reviewBtn = container.querySelector("#lm_review_btn");
+  const reviewCancelBtn = container.querySelector("#lm_review_cancel");
   const reviewInstructions = container.querySelector("#lm_review_instructions");
   const reviewStatus = container.querySelector("#lm_review_status");
   const issueListEl = container.querySelector("#lm_issue_list");
@@ -332,6 +341,8 @@ export async function openMainPopup(settings, context) {
   // back to the real entry objects for the rewrite flow.
   let currentEntries = [];
   let currentBookName = null;
+  let reviewController = null;
+  let pendingChatRange = chatRangeRequest;
 
   // Return the selected inclusive message range, preserving original chat
   // indexes so the user can refer to the same numbers they entered.
@@ -678,6 +689,15 @@ export async function openMainPopup(settings, context) {
         if (!chatEndInput.value) chatEndInput.value = String(chatCount - 1);
       }
 
+      if (pendingChatRange) {
+        if (chatStartInput)
+          chatStartInput.value = String(pendingChatRange.start);
+        if (chatEndInput) chatEndInput.value = String(pendingChatRange.end);
+        if (chatInstructions)
+          chatInstructions.value = pendingChatRange.instructions || "";
+        pendingChatRange = null;
+      }
+
       // Restore an unfinished draft only for the lorebook it belongs to.
       const savedDraft = sessionCache.chatDraft;
       if (
@@ -976,29 +996,34 @@ export async function openMainPopup(settings, context) {
   // generated instead of a blank panel.
   function showReview(reviewData) {
     const { issues, batchCount, skippedBatches } = reviewData;
+    const visibleIssues = filterIgnoredIssues(currentBookName, issues);
+    const ignoredCount = issues.length - visibleIssues.length;
 
     const skipNote =
       skippedBatches > 0
         ? ` (${skippedBatches} of ${batchCount} batch(es) couldn't be read and were skipped — try raising Max Response Tokens or a more capable model for a complete review.)`
         : "";
 
-    if (issues.length === 0) {
+    if (visibleIssues.length === 0) {
       issueListEl.innerHTML = "";
       showStatus(
         reviewStatus,
-        `No issues found across ${batchCount} batch(es). Your lorebook looks clean.${skipNote}`,
+        issues.length === 0
+          ? `No issues found across ${batchCount} batch(es). Your lorebook looks clean.${skipNote}`
+          : `All ${issues.length} detected issue(s) are ignored for this lorebook.${skipNote}`,
         skippedBatches > 0 ? "error" : "success",
       );
       return;
     }
 
-    const fixedCount = issues.filter((it) =>
+    const fixedCount = visibleIssues.filter((it) =>
       sessionCache.fixedIssues.has(it),
     ).length;
     const fixedNote = fixedCount > 0 ? ` ${fixedCount} fixed so far.` : "";
+    const ignoredNote = ignoredCount > 0 ? ` ${ignoredCount} ignored.` : "";
     showStatus(
       reviewStatus,
-      `Found ${issues.length} issue(s) across ${batchCount} batch(es). Click an entry to fix it.${fixedNote}${skipNote}`,
+      `Found ${visibleIssues.length} issue(s) across ${batchCount} batch(es). Click an entry to fix it.${fixedNote}${ignoredNote}${skipNote}`,
       "success",
     );
 
@@ -1018,7 +1043,7 @@ export async function openMainPopup(settings, context) {
 
     renderIssueList(
       issueListEl,
-      issues,
+      visibleIssues,
       currentEntries,
       sessionCache.fixedIssues,
       (entry, issue) => {
@@ -1044,6 +1069,13 @@ export async function openMainPopup(settings, context) {
           () => markFixed(issue),
         );
       },
+      (issue) => {
+        ignoreIssue(currentBookName, issue);
+        toastr.success(
+          "Issue ignored for this lorebook. It will not appear in future reviews.",
+        );
+        showReview(reviewData);
+      },
     );
 
     // Add "Apply All Fixes" button for bulk resolution
@@ -1058,7 +1090,7 @@ export async function openMainPopup(settings, context) {
     applyAllBtn.addEventListener("click", async () => {
       applyAllBtn.disabled = true;
       try {
-        await applyAllFixes(issues, reviewData, reviewStatus);
+        await applyAllFixes(visibleIssues, reviewData, reviewStatus);
       } finally {
         applyAllBtn.disabled = false;
       }
@@ -1068,11 +1100,30 @@ export async function openMainPopup(settings, context) {
     issueListEl.insertBefore(applyAllBtn, issueListEl.firstChild);
   }
 
+  reviewCancelBtn?.addEventListener("click", () => {
+    if (!reviewController) return;
+    reviewController.abort();
+    // Active-connection generateRaw has no per-request AbortSignal. Stop only
+    // when this extension's own review is being cancelled by the user.
+    if (!settings.connectionProfileId) context.stopGeneration?.();
+    showStatus(
+      reviewStatus,
+      "Cancelling review after the current request...",
+      "loading",
+    );
+    reviewCancelBtn.disabled = true;
+  });
+
   reviewBtn?.addEventListener("click", async () => {
     if (!currentBookName || currentEntries.length === 0) return;
 
     try {
       reviewBtn.disabled = true;
+      reviewController = new AbortController();
+      if (reviewCancelBtn) {
+        reviewCancelBtn.disabled = false;
+        reviewCancelBtn.style.display = "inline-block";
+      }
       issueListEl.innerHTML = "";
       showStatus(reviewStatus, "Reviewing entries...", "loading");
 
@@ -1084,6 +1135,7 @@ export async function openMainPopup(settings, context) {
         {
           profileId: settings.connectionProfileId || null,
           maxBatchChars: settings.reviewBatchBudget,
+          signal: reviewController.signal,
           onProgress: (current, total) => {
             showStatus(
               reviewStatus,
@@ -1098,11 +1150,23 @@ export async function openMainPopup(settings, context) {
       sessionCache.review = reviewData;
       sessionCache.fixedIssues = new Set();
       showReview(reviewData);
+      if (reviewData.cancelled) {
+        showStatus(
+          reviewStatus,
+          `Review cancelled. Kept results from completed batches (${reviewData.issues.length} issue(s)).`,
+          "success",
+        );
+      }
     } catch (e) {
       console.error("[LorebookManipulator] Review failed:", e);
       showFriendlyError(reviewStatus, e);
     } finally {
       reviewBtn.disabled = false;
+      reviewController = null;
+      if (reviewCancelBtn) {
+        reviewCancelBtn.style.display = "none";
+        reviewCancelBtn.disabled = false;
+      }
     }
   });
 
@@ -1188,6 +1252,7 @@ function renderIssueList(
   fixedIssues,
   onFixClick,
   onResolveClick,
+  onIgnoreClick,
 ) {
   container.innerHTML = "";
 
@@ -1211,6 +1276,16 @@ function renderIssueList(
     desc.className = "lm-issue-desc";
     desc.textContent = issue.description;
     card.appendChild(desc);
+
+    if (typeof onIgnoreClick === "function") {
+      const ignoreBtn = document.createElement("button");
+      ignoreBtn.type = "button";
+      ignoreBtn.className = "menu_button lm-issue-ignore";
+      ignoreBtn.title = "Ignore this issue in future reviews";
+      ignoreBtn.innerHTML = '<i class="fa-solid fa-eye-slash"></i> Ignore';
+      ignoreBtn.addEventListener("click", () => onIgnoreClick(issue));
+      card.appendChild(ignoreBtn);
+    }
 
     // Resolve only the entries we can actually map to the lorebook.
     const resolvable = issue.entries
