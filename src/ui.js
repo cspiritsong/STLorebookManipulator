@@ -129,6 +129,14 @@ export async function openMainPopup(
             <h3>Lorebook Manipulator</h3>
             <label for="lm_popup_book_select">Select Lorebook</label>
             <select id="lm_popup_book_select" class="text_pole">${optionsHtml}</select>
+            <div class="lm-lorebook-filter-actions">
+                <button type="button" id="lm_current_lorebooks_btn" class="menu_button">
+                    <i class="fa-solid fa-location-crosshairs"></i> Current Lorebooks
+                </button>
+                <button type="button" id="lm_all_lorebooks_btn" class="menu_button">
+                    <i class="fa-solid fa-list"></i> All Lorebooks
+                </button>
+            </div>
 
             <div id="lm_review_section" class="lm-review-section" style="display:none;">
                 <label for="lm_review_instructions">Review the whole book</label>
@@ -235,6 +243,10 @@ export async function openMainPopup(
   if (!container) return;
 
   const select = container.querySelector("#lm_popup_book_select");
+  const currentLorebooksBtn = container.querySelector(
+    "#lm_current_lorebooks_btn",
+  );
+  const allLorebooksBtn = container.querySelector("#lm_all_lorebooks_btn");
   const entryListEl = container.querySelector("#lm_popup_entry_list");
   const searchInput = container.querySelector("#lm_entry_search");
   const reviewSection = container.querySelector("#lm_review_section");
@@ -352,6 +364,48 @@ export async function openMainPopup(
   let currentBookName = null;
   let reviewController = null;
   let pendingChatRange = chatRangeRequest;
+
+  function renderBookOptions(names, selectedName = "") {
+    if (!select) return;
+    select.innerHTML =
+      '<option value="" disabled>-- Choose a lorebook --</option>';
+    for (const name of names) {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      select.appendChild(option);
+    }
+    select.value = names.includes(selectedName) ? selectedName : "";
+  }
+
+  function getCurrentLorebookNames() {
+    // #world_info is SillyTavern's active World Info selector. Its selected
+    // options are the books currently attached to this chat/character context.
+    const selected = [
+      ...document.querySelectorAll("#world_info option:checked"),
+    ]
+      .map((option) => option.textContent.trim())
+      .filter((name) => bookNames.includes(name));
+    const chatBook = context.chatMetadata?.world_info;
+    if (typeof chatBook === "string" && bookNames.includes(chatBook)) {
+      selected.push(chatBook);
+    }
+    return [...new Set(selected)];
+  }
+
+  currentLorebooksBtn?.addEventListener("click", () => {
+    const currentBooks = getCurrentLorebookNames();
+    if (currentBooks.length === 0) {
+      toastr.info("No currently selected lorebooks were found for this chat.");
+      return;
+    }
+    renderBookOptions(currentBooks, currentBookName);
+    toastr.info(`Showing ${currentBooks.length} current lorebook(s).`);
+  });
+
+  allLorebooksBtn?.addEventListener("click", () => {
+    renderBookOptions(bookNames, currentBookName);
+  });
 
   // Return the selected inclusive message range, preserving original chat
   // indexes so the user can refer to the same numbers they entered.

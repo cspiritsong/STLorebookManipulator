@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Ignore review issue**: each issue now has an Ignore action. Ignored issue fingerprints are stored per lorebook and filtered from future reviews.
 - **`/lm-chat` slash command**: `/lm-chat <start> <end> [instructions]` opens the popup with an inclusive 0-based chat range prefilled for Create from Chat Range.
 - **Multi-lorebook review**: choose Review Multiple Books, select lorebooks, and receive one combined issue list. Every issue displays its source lorebook; reviews remain independent per book so UIDs never collide.
+- **Current Lorebooks filter**: the main popup can now narrow its selector to World Info books currently active in SillyTavern, with an All Lorebooks reset.
 
 ### Changed
 - **Rate-limit resilience**: every LLM request now retries transient failures (rate limits, proxy hiccups, network blips) with exponential backoff (up to 3 attempts). Auth and context-length errors are not retried (retrying wouldn't help).

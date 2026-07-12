@@ -23,6 +23,12 @@
     min-width: 0;
 }
 
+.lm-lorebook-filter-actions {
+    display: flex;
+    gap: 8px;
+    margin: 8px 0 12px;
+}
+
 .lm-popup-sidebar {
     width: 280px;
     flex-shrink: 0;
