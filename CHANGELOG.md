@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Current Lorebooks filter**: the main popup can now narrow its selector to World Info books currently active in SillyTavern, with an All Lorebooks reset.
 
 ### Changed
+- **Request-feedback refactor**: moved shared request progress and Continue-control rendering from the popup workflow module into `src/request-status.js`, without changing behavior.
 - **Rate-limit resilience**: every LLM request now retries transient failures (rate limits, proxy hiccups, network blips) with exponential backoff (up to 3 attempts). Auth and context-length errors are not retried (retrying wouldn't help).
 - **Request pacing**: whole-book review and Apply All now pace requests (~600ms between batches/issues) so a large book doesn't fire many calls back-to-back and trip the provider's rate limit.
 - **Cancellable review**: the review panel now has Cancel Review. Connection-profile calls abort immediately; active-connection calls use SillyTavern's generation stop and then retain any completed-batch results.

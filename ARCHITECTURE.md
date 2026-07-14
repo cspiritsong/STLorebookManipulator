@@ -19,6 +19,7 @@ STLorebookManipulator/
 │   ├── diff.js            # Word-level diff computation, inline/side-by-side HTML rendering
 │   ├── ui.js              # Popup creation, entry editor, review/issue list, resolve flow, handlers
 │   ├── errors.js          # Maps raw errors to newbie-friendly title/what/fix guidance
+│   ├── request-status.js  # Queue progress rendering and failed-request Continue control
 │   └── utils.js           # Shared HTML escaping helpers (escapeHtml, escapeAttr)
 ├── tests/
 │   ├── backup.test.js     # Unit tests for backup create/restore/download
@@ -81,6 +82,10 @@ STLorebookManipulator/
 - **parseResolveResponse(rawText, affectedEntries)**: Forgiving resolution parser — finds the actions array, coerces uids/actions, downgrades an empty rewrite to "keep", and drops actions targeting uids outside the issue. Throws if no usable actions remain.
 - **extractJson(rawText)** (internal): Shared JSON extraction (handles code fences, surrounding prose, and a bare top-level object **or** array). Used by all parsers so the logic lives in one place.
 - ST's `generateRaw` uses `responseLength` (not `max_tokens`) and, when `jsonSchema` is set, returns the extracted JSON string directly.
+
+### src/request-status.js — Request Feedback
+- Renders the shared queue/wait/running/completed status bar for all AI workflows.
+- Creates standard request options for single-request tools and renders the failed-request Continue control used by reviews. Keeping this presentation logic outside `ui.js` leaves that module focused on workflow orchestration.
 
 ### src/diff.js — Diff Computation & Rendering
 - **computeDiff(oldText, newText)**: Word-level LCS-based diff. Returns array of `{ type: 'equal'|'insert'|'delete', value: string }`.

@@ -34,7 +34,8 @@ const files = [
     "src/diff.js",
     "src/errors.js",
   "src/backup.js",
-  "src/issue-blacklist.js",
+    "src/issue-blacklist.js",
+    "src/request-status.js",
   "src/utils.js",
 ];
 

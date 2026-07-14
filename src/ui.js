@@ -18,6 +18,11 @@ import {
 import { escapeHtml, escapeAttr } from "./utils.js";
 import { renderFriendlyError } from "./errors.js";
 import { filterIgnoredIssues, ignoreIssue } from "./issue-blacklist.js";
+import {
+  createRequestOptions,
+  createRequestProgressReporter,
+  waitForRequestContinue,
+} from "./request-status.js";
 
 const PROMPT_PRESETS = {
   prune:
@@ -2191,71 +2196,6 @@ function showStatus(el, message, type) {
   el.textContent = message;
   el.className = `lm-status lm-status-${type}`;
   el.style.display = "block";
-}
-
-// Queue progress is shown in the same status area as each action so users can
-// distinguish a deliberate rate-limit wait from a stalled request.
-function createRequestProgressReporter(el, label) {
-  return (progress) => showRequestProgress(el, label, progress);
-}
-
-function createRequestOptions(el, label, requestDelayMs = 5000) {
-  return {
-    requestDelayMs,
-    onProgress: createRequestProgressReporter(el, label),
-    onRequestFailure: (error) => waitForRequestContinue(el, label, error),
-  };
-}
-
-function showRequestProgress(el, label, progress) {
-  if (!el) return;
-  let message = `${label}: queued (position ${progress.position || 1}).`;
-  let percent = 5;
-
-  if (progress.state === "waiting") {
-    const seconds = (progress.remainingMs / 1000).toFixed(1);
-    const intervalMs = progress.intervalMs || 5000;
-    message = `${label}: waiting ${seconds}s to respect the ${intervalMs / 1000}s request delay.`;
-    percent = Math.max(
-      10,
-      Math.min(75, 75 * (1 - progress.remainingMs / intervalMs)),
-    );
-  } else if (progress.state === "running") {
-    message = `${label}: request in progress...`;
-    percent = 85;
-  } else if (progress.state === "complete") {
-    message = `${label}: request complete.`;
-    percent = 100;
-  }
-
-  el.className = "lm-status lm-status-loading";
-  el.innerHTML = `<div>${escapeHtml(message)}</div><div class="lm-request-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(percent)}"><div class="lm-request-progress-fill" style="width:${percent}%"></div></div>`;
-  el.style.display = "block";
-}
-
-// A provider failure pauses only the failed LLM request. Continue reruns that
-// request through the queue; completed review batches and applied changes stay
-// intact. Write failures are still handled by their existing backup-safe paths.
-function waitForRequestContinue(el, label, error, signal = null) {
-  return new Promise((resolve) => {
-    if (!el || signal?.aborted) {
-      resolve(false);
-      return;
-    }
-
-    el.className = "lm-status lm-status-error";
-    el.innerHTML = `${renderFriendlyError(error, escapeHtml)}<button type="button" class="menu_button lm-request-continue">Continue ${escapeHtml(label)}</button>`;
-    el.style.display = "block";
-
-    const continueButton = el.querySelector(".lm-request-continue");
-    const finish = (value) => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve(value);
-    };
-    const onAbort = () => finish(false);
-    continueButton?.addEventListener("click", () => finish(true), { once: true });
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
 }
 
 // Render a newbie-friendly error (title + what + how-to-fix) into a status area.
