@@ -1,9 +1,13 @@
 import {
   generateEntryFromChat,
+  generateRewrite,
   parseChatEntryResponse,
   parseLLMResponse,
   normalizeLLMContent,
+  DEFAULT_REQUEST_INTERVAL_MS,
+  resetRequestRateLimiterForTests,
   reviseChatEntryDraft,
+  setRequestRateLimitForTests,
 } from "../src/llm.js";
 
 let passed = 0;
@@ -253,6 +257,10 @@ assertThrows(
 
 console.log("\n=== Chat Range Generation Request Tests ===\n");
 
+// Keep request-router tests fast; production uses a five-second safe default.
+resetRequestRateLimiterForTests();
+setRequestRateLimitForTests(0);
+
 const chatCalls = [];
 const chatContext = {
   generateRaw: async (request) => {
@@ -311,6 +319,78 @@ assert(
     chatCalls[1].prompt.includes("Make it shorter."),
   "Draft revision includes current draft and follow-up instruction",
 );
+
+console.log("\n=== Rate Limiter and Resume Tests ===\n");
+
+assert(
+  DEFAULT_REQUEST_INTERVAL_MS === 5000,
+  "Production request limiter defaults to a conservative five-second delay",
+);
+
+resetRequestRateLimiterForTests();
+setRequestRateLimitForTests(0);
+const startedAt = [];
+const progressStates = [];
+const pacedContext = {
+  async generateRaw() {
+    startedAt.push(Date.now());
+    return JSON.stringify({ rewrittenContent: "Rewritten.", justification: "x" });
+  },
+};
+await Promise.all([
+  generateRewrite("First entry", "Shorten it.", 256, pacedContext, null, {
+    onProgress: (event) => progressStates.push(event.state),
+    requestDelayMs: 25,
+  }),
+  generateRewrite("Second entry", "Shorten it.", 256, pacedContext, null, {
+    requestDelayMs: 25,
+  }),
+]);
+assert(
+  startedAt[1] - startedAt[0] >= 15,
+  "Configured request delay enforces a gap between concurrent LLM calls",
+);
+assert(
+  progressStates.includes("queued") &&
+    progressStates.includes("running") &&
+    progressStates.includes("complete"),
+  "Request queue reports queued, running, and complete progress states",
+);
+
+resetRequestRateLimiterForTests();
+setRequestRateLimitForTests(0);
+let attempts = 0;
+let continuePrompts = 0;
+const resumeContext = {
+  async generateRaw() {
+    attempts++;
+    if (attempts <= 3) throw new Error("503 overloaded");
+    return JSON.stringify({ rewrittenContent: "Recovered.", justification: "x" });
+  },
+};
+const resumed = await generateRewrite(
+  "Original entry",
+  "Shorten it.",
+  256,
+  resumeContext,
+  null,
+  {
+    onRequestFailure: async () => {
+      continuePrompts++;
+      return true;
+    },
+  },
+);
+assert(
+  resumed.rewrittenContent === "Recovered." && attempts === 4,
+  "Continue retries only the failed LLM request after automatic retries",
+);
+assert(
+  continuePrompts === 1,
+  "Failed request pauses once for a Continue decision",
+);
+
+resetRequestRateLimiterForTests();
 
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
 process.exit(failed > 0 ? 1 : 0);

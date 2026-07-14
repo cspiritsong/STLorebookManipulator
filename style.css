@@ -307,6 +307,26 @@
     color: #ff6b6b;
 }
 
+/* Visible queue/wait feedback for every LLM request. */
+.lm-request-progress {
+    height: 5px;
+    margin-top: 7px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(100, 149, 237, 0.25);
+}
+
+.lm-request-progress-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: #6495ed;
+    transition: width 0.2s linear;
+}
+
+.lm-request-continue {
+    margin-top: 8px;
+}
+
 /* Popup Actions */
 .lm-popup-title {
     margin: 0 0 5px 0;

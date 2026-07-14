@@ -26,6 +26,12 @@
 - **Workaround**: Use a model/API that supports structured output (OpenAI, Claude, Gemini), and/or raise Max Response Tokens — truncated JSON is a common cause.
 - **Fix planned**: None needed for now; the retry + skip behavior handles this gracefully.
 
+### Provider Errors Cannot Be Fully Prevented
+- **What**: The extension now queues all AI requests with a configurable delay (5 seconds by default) and retries transient failures, but it cannot prevent authentication failures, provider outages, quota exhaustion, or requests that exceed a model's context window.
+- **Impact**: An operation can still pause at a failed AI request.
+- **Workaround**: Read the visible error guidance, correct the underlying problem, then click **Continue** to retry only that request. Completed review batches and bulk-fix progress remain intact.
+- **Fix planned**: None. These failures originate outside the extension; pacing and resumable requests are the safe mitigation.
+
 ### localStorage Size Limits Not Monitored
 - **What**: Backups are stored in localStorage, which typically has a 5-10MB limit per origin. Large lorebooks with many backup entries could approach this limit silently.
 - **Impact**: Backup creation may fail (a visible error is shown via toast), blocking the apply.

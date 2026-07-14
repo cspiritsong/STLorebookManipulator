@@ -16,6 +16,7 @@ A SillyTavern extension for safely rewriting and pruning lorebook entries using 
 - **Choose any connection profile** for the work, independent of your active chat connection
 - Review suggested changes in a highlighted before/after diff (inline or side-by-side)
 - **Plain-language errors**: when something fails, you get a clear explanation of what went wrong and how to fix it — not a cryptic technical message
+- **Visible request pacing and recovery**: every AI request shows its queue/wait/progress state. If the provider still fails after retries, use **Continue** to retry just that request without restarting the whole operation.
 - Auto-backup history before every change, with restore from any point
 
 ## Why It Exists
@@ -80,6 +81,7 @@ Open the **Extensions** tab → **Lorebook Manipulator** settings drawer to conf
 - **Backup Retention**: Number of backups to keep (default: 5)
 - **Rewrite Prompt**: Choose a preset (Prune / Clarify / Fix Grammar) or enter custom instructions
 - **Max Tokens**: Maximum response length for LLM calls
+- **Request Delay**: Minimum delay between AI requests. Defaults to a conservative 5 seconds; lower it only when your provider explicitly supports faster requests.
 
 ## Safety
 

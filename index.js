@@ -24,6 +24,7 @@ const DEFAULT_SETTINGS = Object.freeze({
   maxTokens: 1024,
   reviewBatchBudget: 12000,
   connectionProfileId: "",
+  requestDelayMs: 5000,
 });
 
 let currentBookName = null;
@@ -100,6 +101,15 @@ jQuery(async () => {
       2000,
       Math.min(100000, val || 12000),
     );
+    context.saveSettingsDebounced();
+  });
+
+  $("#lm_request_delay").on("change", function () {
+    const seconds = Number($(this).val());
+    getSettings(context).requestDelayMs = Math.round(
+      Math.max(1, Math.min(30, Number.isFinite(seconds) ? seconds : 5)) * 1000,
+    );
+    $(this).val(getSettings(context).requestDelayMs / 1000);
     context.saveSettingsDebounced();
   });
 
@@ -197,6 +207,7 @@ function initSettings(context) {
   $("#lm_custom_prompt").val(settings.customPrompt);
   $("#lm_max_tokens").val(settings.maxTokens);
   $("#lm_review_batch_budget").val(settings.reviewBatchBudget);
+  $("#lm_request_delay").val(settings.requestDelayMs / 1000);
 
   toggleCustomPrompt(settings.promptPreset);
 }

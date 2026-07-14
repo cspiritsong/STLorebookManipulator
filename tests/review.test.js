@@ -1,7 +1,9 @@
 import {
   batchEntries,
   parseReviewResponse,
+  resetRequestRateLimiterForTests,
   reviewEntries,
+  setRequestRateLimitForTests,
 } from "../src/llm.js";
 
 let passed = 0;
@@ -40,6 +42,11 @@ async function assertRejects(promise, message) {
 }
 
 console.log("\n=== Review Batching Tests ===\n");
+
+// Review behavior is tested separately from queue pacing; avoid deliberate
+// production waits in this unit test process.
+resetRequestRateLimiterForTests();
+setRequestRateLimitForTests(0);
 
 // Helper to build an entry of a given content size
 const makeEntry = (uid, chars) => ({

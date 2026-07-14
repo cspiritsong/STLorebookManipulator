@@ -15,7 +15,7 @@ STLorebookManipulator/
 ├── src/
 │   ├── backup.js          # Backup history management, restore, file download
 │   ├── lorebook.js        # Load/save/reload lorebook data via ST World Info API
-│   ├── llm.js             # LLM calls: single-entry rewrite, whole-book review (batching), multi-entry resolve; JSON schema parsing
+│   ├── llm.js             # Rate-limited LLM queue, calls for rewrite/review/resolve/chat drafts, JSON schema parsing
 │   ├── diff.js            # Word-level diff computation, inline/side-by-side HTML rendering
 │   ├── ui.js              # Popup creation, entry editor, review/issue list, resolve flow, handlers
 │   ├── errors.js          # Maps raw errors to newbie-friendly title/what/fix guidance
@@ -68,6 +68,8 @@ STLorebookManipulator/
 - All functions are async and handle errors with visible toast notifications.
 
 ### src/llm.js — LLM Interaction
+- All LLM calls pass through one in-browser queue with a configurable minimum start-to-start interval. The persisted default is a conservative five seconds; users can tune it from 1 to 30 seconds in either settings surface. The queue reports queued, waiting, running, and complete states to the UI.
+- After automatic retries are exhausted, callers can provide `onRequestFailure`. The UI uses it to pause the failed LLM request and offer Continue, which retries only that request without discarding completed review batches or bulk-fix progress. Save/delete operations are not replayed automatically because they mutate data.
 - **generateRewrite(entryContent, promptText, maxTokens, context, profileId=null)**: Single-entry rewrite with structured output. Returns `{ rewrittenContent, justification }`.
 - **reviewEntries(entries, instructions, maxTokens, context, options)**: Whole-book review. Auto-batches entries via `batchEntries`, sends each batch with the review JSON schema, and combines results into one issue list. Retries an unreadable batch once with a strict format reminder, then skips it (non-fatal). Reports progress via `options.onProgress(current, total)`. `options.profileId` selects a connection profile. Returns `{ issues, batchCount, skippedBatches }`; throws only if every batch is unreadable.
 - **resolveIssue(issue, affectedEntries, maxTokens, context, profileId=null)**: Generates a cross-entry resolution plan for one multi-entry issue. Returns `{ summary, actions: [{ uid, action: 'keep'|'rewrite'|'delete', newContent, reason }] }` via `RESOLVE_SCHEMA`.
@@ -183,6 +185,8 @@ Loaded on init, saved via `saveSettingsDebounced()` on every change.
 | Whole-book review returns an issue list, not direct rewrites | Keeps the user in control: the review surfaces problems, then each fix goes through the existing per-entry diff/approve flow. No mass changes. |
 | Auto-batch by character budget | Large lorebooks exceed the model's context window. Batching by a char budget (default 12000) keeps each request safe. Tradeoff: issues spanning two batches can't be detected (see Known Unstable Areas). |
 | Connection profile routing via `callLLM` | Lets the user run lorebook work on a different model than their chat (e.g. cheaper/faster). Default ('') keeps the original `generateRaw` behavior so nothing breaks when Connection Manager is absent. `normalizeLLMContent` hides the response-shape difference between the two paths so parsers/tests stay unchanged. |
+| Central LLM request queue | A shared configurable delay prevents simultaneous extension actions from causing avoidable provider throttling. It needs no dependency and provides consistent progress feedback everywhere. |
+| Conservative configurable request delay | Five seconds (12 requests per minute) is the safe default for all providers. The control remains available for advanced users whose provider documents a different limit. |
 
 ## Known Unstable Areas
 

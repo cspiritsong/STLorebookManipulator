@@ -185,6 +185,74 @@ const RESOLVE_SCHEMA = {
 
 // ── LLM request router ───────────────────────────────────────────────────
 
+// Every provider request passes through one queue. This prevents concurrent
+// extension workflows from bursting calls into a provider and rate-limiting
+// each other.
+export const DEFAULT_REQUEST_INTERVAL_MS = 5000;
+let requestIntervalMs = DEFAULT_REQUEST_INTERVAL_MS;
+let requestQueue = Promise.resolve();
+let queuedRequestCount = 0;
+let lastRequestStartedAt = 0;
+
+// Test controls keep unit tests fast while production retains the safe default.
+export function setRequestRateLimitForTests(intervalMs = DEFAULT_REQUEST_INTERVAL_MS) {
+  requestIntervalMs = Math.max(0, Number(intervalMs) || 0);
+}
+
+export function resetRequestRateLimiterForTests() {
+  requestIntervalMs = DEFAULT_REQUEST_INTERVAL_MS;
+  requestQueue = Promise.resolve();
+  queuedRequestCount = 0;
+  lastRequestStartedAt = 0;
+}
+
+function reportRequestProgress(onProgress, state, details = {}) {
+  if (typeof onProgress === "function") onProgress({ state, ...details });
+}
+
+async function waitForRequestSlot(waitMs, intervalMs, onProgress, signal) {
+  const startedAt = Date.now();
+  while (true) {
+    if (signal?.aborted) throw new Error("Request cancelled.");
+    const remainingMs = Math.max(0, waitMs - (Date.now() - startedAt));
+    reportRequestProgress(onProgress, "waiting", { remainingMs, intervalMs });
+    if (remainingMs === 0) return;
+    await sleep(Math.min(remainingMs, 250));
+  }
+}
+
+function queueLLMRequest(task, { onProgress, signal, requestDelayMs } = {}) {
+  const position = ++queuedRequestCount;
+  reportRequestProgress(onProgress, "queued", { position });
+
+  const run = async () => {
+    try {
+      if (signal?.aborted) throw new Error("Request cancelled.");
+      const intervalMs = Number.isFinite(requestDelayMs)
+        ? Math.max(1000, Math.min(30000, requestDelayMs))
+        : requestIntervalMs;
+      const waitMs = Math.max(
+        0,
+        lastRequestStartedAt + intervalMs - Date.now(),
+      );
+      await waitForRequestSlot(waitMs, intervalMs, onProgress, signal);
+      if (signal?.aborted) throw new Error("Request cancelled.");
+      lastRequestStartedAt = Date.now();
+      reportRequestProgress(onProgress, "running");
+      const result = await task();
+      reportRequestProgress(onProgress, "complete");
+      return result;
+    } finally {
+      queuedRequestCount--;
+    }
+  };
+
+  const queued = requestQueue.then(run, run);
+  // A failed request must not block subsequent requests forever.
+  requestQueue = queued.catch(() => {});
+  return queued;
+}
+
 // Normalize the many response shapes into a single JSON string so the parsers
 // below can treat every backend uniformly.
 //
@@ -268,11 +336,15 @@ async function callLLM(args, context, maxRetries = 2) {
   let lastError = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      return await callLLMOnce(args, context);
+      return await queueLLMRequest(() => callLLMOnce(args, context), args);
     } catch (e) {
       lastError = e;
       // Stop early if the error isn't worth retrying, or we're out of attempts.
       if (attempt === maxRetries || !isRetryableError(e)) {
+        if (typeof args.onRequestFailure === "function" && !args.signal?.aborted) {
+          const shouldContinue = await args.onRequestFailure(e);
+          if (shouldContinue) return callLLM(args, context, maxRetries);
+        }
         throw e;
       }
       // Exponential backoff: 1s, 2s, 4s ... with a little jitter.
@@ -347,6 +419,7 @@ export async function generateRewrite(
   maxTokens,
   context,
   profileId = null,
+  requestOptions = {},
 ) {
   if (!entryContent || typeof entryContent !== "string") {
     throw new Error(
@@ -379,6 +452,7 @@ Rewrite this entry according to the instructions above. Return your response as 
         responseLength: maxTokens || 1024,
         jsonSchema: REWRITE_SCHEMA,
         profileId,
+        ...requestOptions,
       },
       context,
     );
@@ -400,6 +474,7 @@ export async function generateEntryFromChat(
   maxTokens,
   context,
   profileId = null,
+  requestOptions = {},
 ) {
   if (!Array.isArray(messages) || messages.length === 0) {
     throw new Error(
@@ -440,6 +515,7 @@ Create one new lorebook entry from this range. Return title, primaryKeys, second
         responseLength: maxTokens || 1024,
         jsonSchema: CHAT_ENTRY_SCHEMA,
         profileId,
+        ...requestOptions,
       },
       context,
     );
@@ -465,6 +541,7 @@ export async function reviseChatEntryDraft(
   maxTokens,
   context,
   profileId = null,
+  requestOptions = {},
 ) {
   if (!Array.isArray(messages) || messages.length === 0) {
     throw new Error(
@@ -520,6 +597,7 @@ Revise the draft. Return title, primaryKeys, secondaryKeys, content, and justifi
         responseLength: maxTokens || 1024,
         jsonSchema: CHAT_ENTRY_SCHEMA,
         profileId,
+        ...requestOptions,
       },
       context,
     );
@@ -654,6 +732,9 @@ Report issues as JSON with an "issues" array. Reference each affected entry by i
             jsonSchema: REVIEW_SCHEMA,
             profileId,
             signal,
+            requestDelayMs: options.requestDelayMs,
+            onProgress: options.onRequestProgress,
+            onRequestFailure: options.onRequestFailure,
           },
           context,
         );
@@ -714,6 +795,7 @@ export async function resolveIssue(
   maxTokens,
   context,
   profileId = null,
+  requestOptions = {},
 ) {
   if (!issue || typeof issue !== "object") {
     throw new Error("No issue provided to resolve.");
@@ -759,6 +841,7 @@ Produce a resolution plan as JSON with a "summary" and an "actions" array (one a
       responseLength: maxTokens || 2048,
       jsonSchema: RESOLVE_SCHEMA,
       profileId,
+      ...requestOptions,
     },
     context,
   );
