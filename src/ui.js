@@ -206,12 +206,13 @@ export async function openMainPopup(
                 </div>
             </div>
 
-            <div id="lm_popup_entry_list" class="lm-entry-list" style="display:none; margin-top:10px;">
-                <button type="button" id="lm_popup_create_entry" class="menu_button menu_button_icon" style="margin-bottom: 8px;">
-                    <i class="fa-solid fa-plus"></i> Create New Entry
+            <div id="lm_popup_entry_controls" style="display:none; margin-top:10px;">
+                <button type="button" id="lm_popup_create_entry" class="menu_button menu_button_icon lm-create-entry-button">
+                    <i class="fa-solid fa-plus"></i> Create New Lorebook Entry
                 </button>
-                <input id="lm_entry_search" type="text" class="text_pole" placeholder="Search entries by name, keys, or content..." style="margin-bottom: 8px;" />
+                <input id="lm_entry_search" type="text" class="text_pole" placeholder="Search entries by name, keys, or content..." style="margin: 8px 0;" />
             </div>
+            <div id="lm_popup_entry_list" class="lm-entry-list" style="display:none;"></div>
         </div>
 
         <div class="lm-popup-sidebar">
@@ -260,6 +261,8 @@ export async function openMainPopup(
   );
   const allLorebooksBtn = container.querySelector("#lm_all_lorebooks_btn");
   const entryListEl = container.querySelector("#lm_popup_entry_list");
+  const entryControlsEl = container.querySelector("#lm_popup_entry_controls");
+  const createEntryBtn = container.querySelector("#lm_popup_create_entry");
   const searchInput = container.querySelector("#lm_entry_search");
   const reviewSection = container.querySelector("#lm_review_section");
   const reviewBtn = container.querySelector("#lm_review_btn");
@@ -654,6 +657,11 @@ export async function openMainPopup(
     renderFilteredList();
   });
 
+  createEntryBtn?.addEventListener("click", () => {
+    if (!currentBookName) return;
+    openCreateEntryPopup(currentBookName, settings, context, loadAndRender);
+  });
+
   // Render backup history in the popup with storage indicator
   async function renderPopupBackupHistory(bookName) {
     if (!backupHistoryEl) return;
@@ -748,6 +756,7 @@ export async function openMainPopup(
   async function loadAndRender(bookName) {
     entryListEl.innerHTML = '<p class="lm-no-backups">Loading...</p>';
     entryListEl.style.display = "block";
+    if (entryControlsEl) entryControlsEl.style.display = "block";
 
     const entries = await loadLorebook(bookName, context);
     currentEntries = entries;
@@ -835,48 +844,13 @@ export async function openMainPopup(
     renderPopupBackupHistory(bookName);
 
     if (entries.length === 0) {
-      // Rebuild UI controls even when no entries
-      const savedSearch = searchInput ? searchInput.value : "";
       entryListEl.innerHTML =
         '<p class="lm-no-backups">No entries in this lorebook.</p>';
-      entryListEl.appendChild(buildCreateButton());
-      if (searchInput) {
-        entryListEl.appendChild(searchInput);
-        searchInput.value = savedSearch;
-      }
       return;
     }
 
-    // Preserve search input and rebuild Create button when re-rendering
-    const savedSearch = searchInput ? searchInput.value : "";
     entryListEl.innerHTML = "";
-    entryListEl.appendChild(buildCreateButton());
-    if (searchInput) {
-      entryListEl.appendChild(searchInput);
-      searchInput.value = savedSearch;
-    }
-
     renderFilteredList();
-  }
-
-  // Build a fresh Create New Entry button with its click handler
-  function buildCreateButton() {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.id = "lm_popup_create_entry";
-    btn.className = "menu_button menu_button_icon";
-    btn.style.marginBottom = "8px";
-    btn.innerHTML = '<i class="fa-solid fa-plus"></i> Create New Entry';
-    btn.addEventListener("click", async () => {
-      if (!currentBookName) return;
-      try {
-        openCreateEntryPopup(currentBookName, settings, context, loadAndRender);
-      } catch (e) {
-        console.error("[LorebookManipulator] Create entry failed:", e);
-        toastr.error(`Failed to create entry: ${e.message}`);
-      }
-    });
-    return btn;
   }
 
   // Apply fixes for all unresolved issues in bulk.

@@ -49,12 +49,6 @@
 - **Impact**: Low — ST's own editor would also struggle with corrupt data. Extension errors are caught and surfaced via toast.
 - **Fix planned**: A future release will add basic schema validation on load.
 
-### "Create New Entry" Button Not Visible in Popup (Bug)
-- **What**: The "Create New Entry" button is not appearing in the popup after selecting a lorebook. The dynamic button creation via `buildCreateButton()` is not rendering in the browser despite working in tests.
-- **Impact**: Users cannot create new entries from the popup UI.
-- **Workaround**: Use SillyTavern's built-in lorebook editor to create entries.
-- **Fix planned**: Debug the DOM rendering — possibly a CSS conflict or SillyTavern popup constraint preventing the button from appearing.
-
 ### Chat Range Uses Internal 0-Based Message Indexes
 - **What**: Create from Chat Range accepts SillyTavern's internal chat indexes, starting at 0, with both endpoints included.
 - **Impact**: Users who count visible messages starting at 1 can select an off-by-one range.

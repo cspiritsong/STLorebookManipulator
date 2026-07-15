@@ -142,6 +142,20 @@
     margin-top: 5px;
 }
 
+/* Persistent creation action stays above the scrolling entry list. */
+.lm-create-entry-button {
+    width: 100%;
+    padding: 10px 12px;
+    color: #07150c;
+    background: var(--SmartThemeColor, #5cf4a0);
+    border-color: var(--SmartThemeColor, #5cf4a0);
+    font-weight: bold;
+}
+
+.lm-create-entry-button:hover {
+    filter: brightness(1.1);
+}
+
 .lm-entry-item {
     display: flex;
     align-items: stretch;
