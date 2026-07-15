@@ -581,6 +581,33 @@ export async function generateEntryFromInstructions(
   return parseChatEntryResponse(result);
 }
 
+// A session-only OOC helper for people who need to talk an idea through before
+// committing to structured lorebook fields.
+export async function chatAboutLore(
+  userMessage,
+  history,
+  contextText,
+  maxTokens,
+  context,
+  profileId = null,
+  requestOptions = {},
+) {
+  if (!userMessage || !userMessage.trim()) {
+    throw new Error("Write a message for the Lore Assistant first.");
+  }
+  const turns = (Array.isArray(history) ? history : [])
+    .slice(-10)
+    .map((turn) => `${turn.role === "assistant" ? "Assistant" : "User"}: ${turn.content}`)
+    .join("\n");
+  return callLLM({
+    systemPrompt: "You are a helpful OOC lorebook assistant. Help users express their ideas naturally, ask one useful follow-up when needed, and suggest concrete lore details without inventing facts. Do not write to a lorebook or claim changes were saved.",
+    prompt: `## Current Context\n${contextText || "No entry selected yet."}\n\n## Conversation\n${turns}\n${turns ? "\n" : ""}User: ${userMessage.trim()}\nAssistant:`,
+    responseLength: maxTokens || 1024,
+    profileId,
+    ...requestOptions,
+  }, context);
+}
+
 export async function checkEntryImpact(
   draft,
   entries,

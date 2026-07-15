@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Lore Assistant**: session-only OOC guidance is now available while creating or editing entries. Its conversation can create a new-entry draft or guide the existing rewrite suggestion flow; no changes are saved automatically.
 - **Instruction-based entry drafts**: Create New Entry can now generate editable title, keys, secondary keys, and content from user instructions, show field/content before-after previews, and optionally check the draft for duplicate, overlap, or contradiction risks before saving.
 - **Chat extraction resume record**: Create from Chat Range now records the highest successfully added end-message index per chat and lorebook. Reopening the same chat/lorebook shows the last endpoint and suggests the next range.
 - **Configurable conservative request delay**: request pacing now defaults to 5 seconds and can be adjusted from 1 to 30 seconds in both settings panels. The wait progress reports the selected delay.

@@ -2,6 +2,7 @@ import {
   generateEntryFromChat,
   generateEntryFromInstructions,
   checkEntryImpact,
+  chatAboutLore,
   generateRewrite,
   reviewEntries,
   reviseChatEntryDraft,
@@ -118,6 +119,7 @@ const sessionCache = {
   // Active chat-range draft survives an accidental Close/reopen for the same
   // lorebook. It stays in memory only; Add to Lorebook is still explicit.
   chatDraft: null,
+  loreAssistantHistory: new Map(),
 };
 
 export async function openMainPopup(
@@ -1654,6 +1656,47 @@ export async function openRewritePopup(
   const keysInput = container.querySelector("#lm_field_keys");
   const secondaryInput = container.querySelector("#lm_field_secondary");
   const contentInput = container.querySelector("#lm_field_content");
+  const assistantInput = container.querySelector("#lm_assistant_message");
+  const assistantSendBtn = container.querySelector("#lm_assistant_send");
+  const assistantHistoryEl = container.querySelector("#lm_assistant_history");
+  const assistantApplyBtn = container.querySelector("#lm_assistant_apply");
+  const assistantKey = `${bookName}:${entry.uid}`;
+  const assistantHistory = sessionCache.loreAssistantHistory.get(assistantKey) || [];
+
+  function renderAssistantHistory() {
+    if (!assistantHistoryEl) return;
+    assistantHistoryEl.innerHTML = assistantHistory
+      .map((turn) => `<div class="lm-chat-history-item"><span>${turn.role === "assistant" ? "Assistant" : "You"}:</span> ${escapeHtml(turn.content)}</div>`)
+      .join("");
+  }
+  renderAssistantHistory();
+
+  assistantSendBtn?.addEventListener("click", async () => {
+    const message = assistantInput?.value || "";
+    try {
+      assistantSendBtn.disabled = true;
+      const reply = await chatAboutLore(
+        message,
+        assistantHistory,
+        `Editing entry: ${entry.comment || "(untitled)"}\n${contentInput?.value || ""}`,
+        settings.maxTokens,
+        context,
+        settings.connectionProfileId || null,
+        createRequestOptions(statusEl, "Lore Assistant", settings.requestDelayMs),
+      );
+      assistantHistory.push({ role: "user", content: message }, { role: "assistant", content: reply });
+      if (assistantHistory.length > 20) assistantHistory.splice(0, assistantHistory.length - 20);
+      sessionCache.loreAssistantHistory.set(assistantKey, assistantHistory);
+      if (assistantInput) assistantInput.value = "";
+      renderAssistantHistory();
+    } catch (e) { showFriendlyError(statusEl, e); } finally { assistantSendBtn.disabled = false; }
+  });
+
+  assistantApplyBtn?.addEventListener("click", () => {
+    if (assistantHistory.length === 0) return;
+    promptText += `\n\nUse this Lore Assistant conversation as additional user guidance:\n${assistantHistory.map((turn) => `${turn.role}: ${turn.content}`).join("\n")}`;
+    showStatus(statusEl, "Assistant guidance will be used for the next Generate Suggestion.", "success");
+  });
 
   // Track original field values for change preview
   const originalFields = {
@@ -2036,6 +2079,7 @@ export async function openCreateEntryPopup(
     <div id="lm_ce_status" class="lm-status"></div>
     <div id="lm_ce_diff" class="lm-diff-container" style="display:none;"></div>
     <div id="lm_ce_impact_results" class="lm-issue-list"></div>
+    <div class="lm-chat-range-section"><h4>Lore Assistant</h4><div id="lm_ce_assistant_history" class="lm-chat-history"></div><textarea id="lm_ce_assistant_message" class="text_pole textarea_compact" rows="2" placeholder="Talk through the entry idea naturally..."></textarea><div class="lm-popup-actions"><button type="button" id="lm_ce_assistant_send" class="menu_button">Send</button><button type="button" id="lm_ce_assistant_draft" class="menu_button">Create Draft from Conversation</button></div></div>
   </div>`;
 
   const popup = new Popup(popupHtml, POPUP_TYPE.TEXT, "", {
@@ -2061,7 +2105,18 @@ export async function openCreateEntryPopup(
   const statusEl = container.querySelector("#lm_ce_status");
   const diffEl = container.querySelector("#lm_ce_diff");
   const impactEl = container.querySelector("#lm_ce_impact_results");
+  const assistantMessage = container.querySelector("#lm_ce_assistant_message");
+  const assistantSend = container.querySelector("#lm_ce_assistant_send");
+  const assistantDraft = container.querySelector("#lm_ce_assistant_draft");
+  const assistantHistoryEl = container.querySelector("#lm_ce_assistant_history");
+  const assistantKey = `new:${bookName}`;
+  const assistantHistory = sessionCache.loreAssistantHistory.get(assistantKey) || [];
   let previousDraft = { title: "", primaryKeys: [], secondaryKeys: [], content: "" };
+
+  function renderCreateAssistant() {
+    if (assistantHistoryEl) assistantHistoryEl.innerHTML = assistantHistory.map((turn) => `<div class="lm-chat-history-item"><span>${turn.role === "assistant" ? "Assistant" : "You"}:</span> ${escapeHtml(turn.content)}</div>`).join("");
+  }
+  renderCreateAssistant();
 
   function readDraft() {
     return {
@@ -2107,6 +2162,25 @@ export async function openCreateEntryPopup(
     } finally {
       generateBtn.disabled = false;
     }
+  });
+
+  assistantSend?.addEventListener("click", async () => {
+    try {
+      assistantSend.disabled = true;
+      const message = assistantMessage?.value || "";
+      const reply = await chatAboutLore(message, assistantHistory, "Creating a new lorebook entry.", settings.maxTokens, context, settings.connectionProfileId || null, createRequestOptions(statusEl, "Lore Assistant", settings.requestDelayMs));
+      assistantHistory.push({ role: "user", content: message }, { role: "assistant", content: reply });
+      if (assistantHistory.length > 20) assistantHistory.splice(0, assistantHistory.length - 20);
+      sessionCache.loreAssistantHistory.set(assistantKey, assistantHistory);
+      if (assistantMessage) assistantMessage.value = "";
+      renderCreateAssistant();
+    } catch (e) { showFriendlyError(statusEl, e); } finally { assistantSend.disabled = false; }
+  });
+
+  assistantDraft?.addEventListener("click", async () => {
+    if (assistantHistory.length === 0) return;
+    if (instructionsInput) instructionsInput.value = assistantHistory.map((turn) => `${turn.role}: ${turn.content}`).join("\n");
+    generateBtn?.click();
   });
 
   impactBtn?.addEventListener("click", async () => {
@@ -2269,6 +2343,13 @@ function buildPopupHtml(entry, issue = null) {
         <label for="lm_field_content">Content</label>
         <textarea id="lm_field_content" class="text_pole textarea_compact lm-content-textarea" rows="8" placeholder="(empty)">${escapeHtml(entry.content || "")}</textarea>
         <small class="lm-field-hint">Edit the content directly, or click "Generate Suggestion" to have the AI rewrite it (you'll see a highlighted diff, and the box above updates to the suggestion).</small>
+
+        <div class="lm-chat-range-section">
+          <h4>Lore Assistant</h4><small class="lm-field-hint">Talk through the idea in plain language. Nothing is saved until you approve it.</small>
+          <div id="lm_assistant_history" class="lm-chat-history"></div>
+          <textarea id="lm_assistant_message" class="text_pole textarea_compact" rows="2" placeholder="Explain what you want to improve or add..."></textarea>
+          <div class="lm-popup-actions"><button type="button" id="lm_assistant_send" class="menu_button">Send</button><button type="button" id="lm_assistant_apply" class="menu_button">Apply as Suggestion Guidance</button></div>
+        </div>
 
         <div id="lm_diff_container" class="lm-diff-container" style="display:none;"></div>
 
