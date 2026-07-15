@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Instruction-based entry drafts**: Create New Entry can now generate editable title, keys, secondary keys, and content from user instructions, show field/content before-after previews, and optionally check the draft for duplicate, overlap, or contradiction risks before saving.
+- **Chat extraction resume record**: Create from Chat Range now records the highest successfully added end-message index per chat and lorebook. Reopening the same chat/lorebook shows the last endpoint and suggests the next range.
 - **Configurable conservative request delay**: request pacing now defaults to 5 seconds and can be adjusted from 1 to 30 seconds in both settings panels. The wait progress reports the selected delay.
 - **Central request rate limiter and visible progress**: all AI actions now share a paced request queue. Status panels show queued, rate-limit waiting, active, and complete states with a progress bar.
 - **Continue after AI failure**: after automatic retries are exhausted, a failed AI request pauses with a Continue button. Continuing retries only that request, retaining completed review batches and bulk-fix progress.

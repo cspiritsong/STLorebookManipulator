@@ -11,6 +11,7 @@ const tests = [
   "utils.test.js",
   "errors.test.js",
   "request-status.test.js",
+  "chat-extraction-record.test.js",
   "llm.test.js",
   "review.test.js",
   "resolve.test.js",

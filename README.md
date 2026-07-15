@@ -11,7 +11,9 @@ A SillyTavern extension for safely rewriting and pruning lorebook entries using 
 - **Review the whole book**: ask the LLM to scan all entries and recommend fixes (duplicates, overlap, verbosity, contradictions). Large books are auto-batched to fit the model's context window.
 - **Resolve issues that span multiple entries** with a single cross-entry plan (e.g. merge duplicates into one and delete the rest), generated on demand and applied only after you approve each action
 - **Edit an entry's title, primary keys, secondary keys, and content** directly — by hand or with AI help
+- **Create new entries** manually or as an editable AI draft from your instructions; optionally check the draft for overlaps with the selected lorebook before saving
 - Send individual entries to the LLM with a rewrite/prune prompt
+- **Resume chat-range extraction**: after adding a chat-derived entry, the extension remembers the last extracted message for that chat and lorebook and suggests the next range.
 - **Delete entries** (with automatic backup first) to clear out duplicates and dead weight
 - **Choose any connection profile** for the work, independent of your active chat connection
 - Review suggested changes in a highlighted before/after diff (inline or side-by-side)

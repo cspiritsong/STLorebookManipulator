@@ -61,6 +61,12 @@
 - **Workaround**: The popup shows the valid range (for example, `#0` to `#63`). Use those index numbers.
 - **Fix planned**: Consider an optional visible-message picker if users find numeric indexes cumbersome.
 
+### Chat Extraction Record Is Local to This Browser
+- **What**: The last-extracted message record is stored in browser localStorage, keyed by chat and lorebook.
+- **Impact**: Clearing browser site data or moving to another browser/device resets the suggested next range. No lorebook data is affected.
+- **Workaround**: The displayed message index can be noted manually; users can always set any range by hand.
+- **Fix planned**: None. Local storage avoids modifying chat metadata or lorebook data for a convenience feature.
+
 ---
 
 ## Resolved Issues

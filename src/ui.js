@@ -1,5 +1,7 @@
 import {
   generateEntryFromChat,
+  generateEntryFromInstructions,
+  checkEntryImpact,
   generateRewrite,
   reviewEntries,
   reviseChatEntryDraft,
@@ -23,6 +25,10 @@ import {
   createRequestProgressReporter,
   waitForRequestContinue,
 } from "./request-status.js";
+import {
+  getChatExtractionRecord,
+  recordChatExtraction,
+} from "./chat-extraction-record.js";
 
 const PROMPT_PRESETS = {
   prune:
@@ -163,6 +169,7 @@ export async function openMainPopup(
             <div id="lm_chat_range_section" class="lm-chat-range-section" style="display:none;">
                 <h4>Create from Chat Range</h4>
                 <small id="lm_chat_range_hint" class="lm-field-hint"></small>
+                <small id="lm_chat_extraction_record" class="lm-field-hint"></small>
                 <div class="lm-chat-range-inputs">
                     <label for="lm_chat_start">Start message #</label>
                     <input id="lm_chat_start" type="number" min="0" step="1" class="text_pole" />
@@ -263,6 +270,9 @@ export async function openMainPopup(
   const issueListEl = container.querySelector("#lm_issue_list");
   const chatRangeSection = container.querySelector("#lm_chat_range_section");
   const chatRangeHint = container.querySelector("#lm_chat_range_hint");
+  const chatExtractionRecord = container.querySelector(
+    "#lm_chat_extraction_record",
+  );
   const chatStartInput = container.querySelector("#lm_chat_start");
   const chatEndInput = container.querySelector("#lm_chat_end");
   const chatInstructions = container.querySelector("#lm_chat_instructions");
@@ -595,6 +605,12 @@ export async function openMainPopup(
       const bookData = await context.loadWorldInfo(currentBookName);
       createBackup(currentBookName, bookData, settings.backupRetention);
       const uid = await createEntry(currentBookName, fields, context);
+      const selectedEnd = Number(chatEndInput?.value);
+      const recordedEnd = recordChatExtraction(
+        context.chatId,
+        currentBookName,
+        selectedEnd,
+      );
 
       if (chatPreview) chatPreview.style.display = "none";
       sessionCache.chatDraft = null;
@@ -602,7 +618,9 @@ export async function openMainPopup(
       toastr.success(`Created entry #${uid}.`);
       showStatus(
         chatStatus,
-        "Entry added. A backup was saved first.",
+        recordedEnd === null
+          ? "Entry added. A backup was saved first."
+          : `Entry added. A backup was saved first. Recorded through message #${recordedEnd}.`,
         "success",
       );
       await loadAndRender(currentBookName);
@@ -746,7 +764,7 @@ export async function openMainPopup(
     const chatCount = Array.isArray(context.chat) ? context.chat.length : 0;
     if (chatRangeSection)
       chatRangeSection.style.display = chatCount > 0 ? "block" : "none";
-    if (chatCount > 0) {
+      if (chatCount > 0) {
       if (chatRangeHint) {
         chatRangeHint.textContent = `Current chat has ${chatCount} messages. Use 0-based, inclusive indexes (#0 to #${chatCount - 1}).`;
       }
@@ -758,6 +776,28 @@ export async function openMainPopup(
       if (chatEndInput) {
         chatEndInput.max = String(chatCount - 1);
         if (!chatEndInput.value) chatEndInput.value = String(chatCount - 1);
+      }
+
+      const lastExtracted = getChatExtractionRecord(
+        context.chatId,
+        bookName,
+      );
+      if (chatExtractionRecord) {
+        chatExtractionRecord.textContent =
+          lastExtracted === null
+            ? "No messages have been recorded for this chat and lorebook yet."
+            : `Last extracted through message #${lastExtracted}.`;
+      }
+      const nextStart = lastExtracted === null ? null : lastExtracted + 1;
+      if (nextStart !== null && nextStart < chatCount && chatStartInput) {
+        chatStartInput.value = String(nextStart);
+        if (chatEndInput) chatEndInput.value = String(chatCount - 1);
+        if (chatExtractionRecord) {
+          chatExtractionRecord.textContent += ` Next range starts at #${nextStart}.`;
+        }
+      } else if (nextStart !== null && chatExtractionRecord) {
+        chatExtractionRecord.textContent +=
+          " All current messages have already been recorded; choose a range manually to extract more.";
       }
 
       if (pendingChatRange) {
@@ -2012,6 +2052,16 @@ export async function openCreateEntryPopup(
 
     <label for="lm_ce_content">Content</label>
     <textarea id="lm_ce_content" class="text_pole" rows="8" placeholder="The lore text for this entry..."></textarea>
+
+    <label for="lm_ce_instructions">Generate from Instructions</label>
+    <textarea id="lm_ce_instructions" class="text_pole textarea_compact" rows="3" placeholder="Describe the entry you want the AI to draft..."></textarea>
+    <div class="lm-popup-actions">
+      <button type="button" id="lm_ce_generate" class="menu_button">Generate Draft</button>
+      <button type="button" id="lm_ce_impact" class="menu_button">Check Lorebook Impact</button>
+    </div>
+    <div id="lm_ce_status" class="lm-status"></div>
+    <div id="lm_ce_diff" class="lm-diff-container" style="display:none;"></div>
+    <div id="lm_ce_impact_results" class="lm-issue-list"></div>
   </div>`;
 
   const popup = new Popup(popupHtml, POPUP_TYPE.TEXT, "", {
@@ -2031,6 +2081,81 @@ export async function openCreateEntryPopup(
   const keysInput = container.querySelector("#lm_ce_keys");
   const secondaryKeysInput = container.querySelector("#lm_ce_secondary_keys");
   const contentInput = container.querySelector("#lm_ce_content");
+  const instructionsInput = container.querySelector("#lm_ce_instructions");
+  const generateBtn = container.querySelector("#lm_ce_generate");
+  const impactBtn = container.querySelector("#lm_ce_impact");
+  const statusEl = container.querySelector("#lm_ce_status");
+  const diffEl = container.querySelector("#lm_ce_diff");
+  const impactEl = container.querySelector("#lm_ce_impact_results");
+  let previousDraft = { title: "", primaryKeys: [], secondaryKeys: [], content: "" };
+
+  function readDraft() {
+    return {
+      title: titleInput?.value || "",
+      primaryKeys: parseKeywordString(keysInput?.value || ""),
+      secondaryKeys: parseKeywordString(secondaryKeysInput?.value || ""),
+      content: contentInput?.value || "",
+    };
+  }
+
+  function showDraftDiff(nextDraft) {
+    const fieldDiff = (name, before, after) =>
+      `<div class="lm-field-change"><div class="lm-field-change-name">${name}</div><div class="lm-field-change-before">${escapeHtml(before || "(empty)")}</div><div class="lm-field-change-after">${escapeHtml(after || "(empty)")}</div></div>`;
+    const contentDiff = renderInlineDiff(
+      computeDiff(previousDraft.content, nextDraft.content),
+    );
+    diffEl.innerHTML = fieldDiff("Title", previousDraft.title, nextDraft.title) +
+      fieldDiff("Primary Keys", previousDraft.primaryKeys.join(", "), nextDraft.primaryKeys.join(", ")) +
+      fieldDiff("Secondary Keys", previousDraft.secondaryKeys.join(", "), nextDraft.secondaryKeys.join(", ")) +
+      `<div class="lm-field-change"><div class="lm-field-change-name">Content</div>${contentDiff}</div>`;
+    diffEl.style.display = "block";
+  }
+
+  generateBtn?.addEventListener("click", async () => {
+    try {
+      generateBtn.disabled = true;
+      const draft = await generateEntryFromInstructions(
+        instructionsInput?.value || "",
+        settings.maxTokens,
+        context,
+        settings.connectionProfileId || null,
+        createRequestOptions(statusEl, "Generating entry draft", settings.requestDelayMs),
+      );
+      showDraftDiff(draft);
+      previousDraft = draft;
+      if (titleInput) titleInput.value = draft.title;
+      if (keysInput) keysInput.value = draft.primaryKeys.join(", ");
+      if (secondaryKeysInput) secondaryKeysInput.value = draft.secondaryKeys.join(", ");
+      if (contentInput) contentInput.value = draft.content;
+      showStatus(statusEl, "Draft ready. Edit it, check impact, then Create when approved.", "success");
+    } catch (e) {
+      showFriendlyError(statusEl, e);
+    } finally {
+      generateBtn.disabled = false;
+    }
+  });
+
+  impactBtn?.addEventListener("click", async () => {
+    try {
+      impactBtn.disabled = true;
+      const impact = await checkEntryImpact(
+        readDraft(),
+        await loadLorebook(bookName, context),
+        settings.maxTokens,
+        context,
+        settings.connectionProfileId || null,
+        createRequestOptions(statusEl, "Checking lorebook impact", settings.requestDelayMs),
+      );
+      impactEl.innerHTML = impact.impacts.length === 0
+        ? '<p class="lm-no-backups">No likely duplicate, overlap, or contradiction found.</p>'
+        : impact.impacts.map((item) => `<div class="lm-issue-card lm-issue-medium"><strong>${escapeHtml(item.type)}: ${escapeHtml(item.name)}</strong><div class="lm-issue-desc">${escapeHtml(item.description)}</div></div>`).join("");
+      showStatus(statusEl, "Impact check complete. Review the results before creating.", "success");
+    } catch (e) {
+      showFriendlyError(statusEl, e);
+    } finally {
+      impactBtn.disabled = false;
+    }
+  });
 
   // Focus the title field
   setTimeout(() => titleInput?.focus(), 100);

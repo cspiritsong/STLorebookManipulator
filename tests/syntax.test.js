@@ -36,6 +36,7 @@ const files = [
   "src/backup.js",
     "src/issue-blacklist.js",
     "src/request-status.js",
+    "src/chat-extraction-record.js",
   "src/utils.js",
 ];
 

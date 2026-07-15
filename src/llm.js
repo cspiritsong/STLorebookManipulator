@@ -67,6 +67,33 @@ const CHAT_ENTRY_SCHEMA = {
   },
 };
 
+const ENTRY_IMPACT_SCHEMA = {
+  name: "LorebookEntryImpact",
+  strict: true,
+  value: {
+    $schema: "http://json-schema.org/draft-04/schema#",
+    type: "object",
+    properties: {
+      impacts: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            uid: { type: "number" },
+            name: { type: "string" },
+            type: { type: "string", enum: ["duplicate", "overlap", "contradiction"] },
+            description: { type: "string" },
+          },
+          required: ["uid", "name", "type", "description"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["impacts"],
+    additionalProperties: false,
+  },
+};
+
 // Schema for a whole-book review. Returns a list of issues, each referencing
 // the affected entries by uid + name so the UI can map an issue back to a
 // concrete entry for the existing rewrite flow.
@@ -529,6 +556,72 @@ Create one new lorebook entry from this range. Return title, primaryKeys, second
       `LLM request failed: ${e.message}. Check your API connection and try again.`,
     );
   }
+}
+
+// Generate a complete, editable new entry from the user's own instructions.
+// The result is never saved here; the popup remains the approval boundary.
+export async function generateEntryFromInstructions(
+  instructions,
+  maxTokens,
+  context,
+  profileId = null,
+  requestOptions = {},
+) {
+  if (!instructions || !instructions.trim()) {
+    throw new Error("Describe the lorebook entry you want to create.");
+  }
+  const result = await callLLM({
+    systemPrompt: "You create one concise SillyTavern lorebook entry from user instructions. Create specific activation keys, avoid broad common words, and do not claim facts the user did not provide. Return only JSON matching the schema.",
+    prompt: `## User Instructions\n${instructions.trim()}\n\nCreate one editable lorebook entry with title, primaryKeys, secondaryKeys, content, and justification.`,
+    responseLength: maxTokens || 1024,
+    jsonSchema: CHAT_ENTRY_SCHEMA,
+    profileId,
+    ...requestOptions,
+  }, context);
+  return parseChatEntryResponse(result);
+}
+
+export async function checkEntryImpact(
+  draft,
+  entries,
+  maxTokens,
+  context,
+  profileId = null,
+  requestOptions = {},
+) {
+  const existing = (Array.isArray(entries) ? entries : [])
+    .map((entry) => `uid=${entry.uid}; name=${entry.comment || "(untitled)"}; keys=${(entry.key || []).join(", ")}\n${entry.content || ""}`)
+    .join("\n\n");
+  const proposed = [
+    "## Proposed Entry",
+    `Title: ${draft.title || "(untitled)"}`,
+    `Keys: ${(draft.primaryKeys || []).join(", ")}`,
+    `Secondary Keys: ${(draft.secondaryKeys || []).join(", ")}`,
+    `Content: ${draft.content || ""}`,
+    "",
+    "## Existing Entries",
+    existing || "(none)",
+  ].join("\n");
+  const result = await callLLM({
+    systemPrompt: "You check a proposed lorebook entry against existing entries. Report only genuine duplicates, overlaps, or contradictions. Return an empty impacts array when none exist. Return only JSON matching the schema.",
+    prompt: proposed,
+    responseLength: maxTokens || 1024,
+    jsonSchema: ENTRY_IMPACT_SCHEMA,
+    profileId,
+    ...requestOptions,
+  }, context);
+  const parsed = extractJson(result);
+  const valid = ["duplicate", "overlap", "contradiction"];
+  return {
+    impacts: (Array.isArray(parsed.impacts) ? parsed.impacts : [])
+      .filter((impact) => impact && typeof impact.description === "string")
+      .map((impact) => ({
+        uid: Number.isFinite(Number(impact.uid)) ? Number(impact.uid) : null,
+        name: typeof impact.name === "string" ? impact.name : "Unknown entry",
+        type: valid.includes(impact.type) ? impact.type : "overlap",
+        description: impact.description.trim(),
+      })),
+  };
 }
 
 // Revise a generated chat-range draft without losing its grounding in the

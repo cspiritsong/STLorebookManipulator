@@ -20,6 +20,7 @@ STLorebookManipulator/
 │   ├── ui.js              # Popup creation, entry editor, review/issue list, resolve flow, handlers
 │   ├── errors.js          # Maps raw errors to newbie-friendly title/what/fix guidance
 │   ├── request-status.js  # Queue progress rendering and failed-request Continue control
+│   ├── chat-extraction-record.js # Per-chat, per-lorebook extraction resume points
 │   └── utils.js           # Shared HTML escaping helpers (escapeHtml, escapeAttr)
 ├── tests/
 │   ├── backup.test.js     # Unit tests for backup create/restore/download
@@ -72,6 +73,7 @@ STLorebookManipulator/
 - All LLM calls pass through one in-browser queue with a configurable minimum start-to-start interval. The persisted default is a conservative five seconds; users can tune it from 1 to 30 seconds in either settings surface. The queue reports queued, waiting, running, and complete states to the UI.
 - After automatic retries are exhausted, callers can provide `onRequestFailure`. The UI uses it to pause the failed LLM request and offer Continue, which retries only that request without discarding completed review batches or bulk-fix progress. Save/delete operations are not replayed automatically because they mutate data.
 - **generateRewrite(entryContent, promptText, maxTokens, context, profileId=null)**: Single-entry rewrite with structured output. Returns `{ rewrittenContent, justification }`.
+- **generateEntryFromInstructions(...)**: Creates an editable all-field entry draft from user instructions. **checkEntryImpact(...)**: optionally checks that draft against the selected lorebook for duplicates, overlaps, or contradictions before save.
 - **reviewEntries(entries, instructions, maxTokens, context, options)**: Whole-book review. Auto-batches entries via `batchEntries`, sends each batch with the review JSON schema, and combines results into one issue list. Retries an unreadable batch once with a strict format reminder, then skips it (non-fatal). Reports progress via `options.onProgress(current, total)`. `options.profileId` selects a connection profile. Returns `{ issues, batchCount, skippedBatches }`; throws only if every batch is unreadable.
 - **resolveIssue(issue, affectedEntries, maxTokens, context, profileId=null)**: Generates a cross-entry resolution plan for one multi-entry issue. Returns `{ summary, actions: [{ uid, action: 'keep'|'rewrite'|'delete', newContent, reason }] }` via `RESOLVE_SCHEMA`.
 - **callLLM({ systemPrompt, prompt, responseLength, jsonSchema, profileId }, context)** (internal): The request router. When `profileId` is set, sends through `ConnectionManagerRequestService.sendRequest()` (json_schema passed as an override payload); otherwise uses `generateRaw()` on the active connection. Returns a normalized string.
@@ -86,6 +88,10 @@ STLorebookManipulator/
 ### src/request-status.js — Request Feedback
 - Renders the shared queue/wait/running/completed status bar for all AI workflows.
 - Creates standard request options for single-request tools and renders the failed-request Continue control used by reviews. Keeping this presentation logic outside `ui.js` leaves that module focused on workflow orchestration.
+
+### src/chat-extraction-record.js — Chat Extraction Resume Points
+- Stores the highest message index successfully added through Create from Chat Range, scoped by SillyTavern `chatId` and lorebook name in localStorage.
+- The chat-range panel shows the recorded endpoint and proposes the next range. It never moves the endpoint backward after an older or overlapping extraction.
 
 ### src/diff.js — Diff Computation & Rendering
 - **computeDiff(oldText, newText)**: Word-level LCS-based diff. Returns array of `{ type: 'equal'|'insert'|'delete', value: string }`.
