@@ -7,6 +7,11 @@ const __dirname = dirname(__filename);
 
 const tests = [
   "syntax.test.js",
+  "backup-call-sites.test.js",
+  "change-plan.test.js",
+  "review-analysis.test.js",
+  "st-context.test.js",
+  "lorebook-schema.test.js",
   "button-type.test.js",
   "utils.test.js",
   "errors.test.js",
@@ -20,6 +25,8 @@ const tests = [
   "issue-blacklist.test.js",
   "lorebook.test.js",
   "ui-utils.test.js",
+  "ui-state.test.js",
+  "ui-runtime-safety.test.js",
 ];
 
 let totalPassed = true;

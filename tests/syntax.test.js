@@ -29,6 +29,10 @@ console.log("\n=== Syntax Check Tests ===\n");
 const files = [
   "index.js",
   "src/ui.js",
+  "src/change-plan.js",
+  "src/review-analysis.js",
+  "src/st-context.js",
+  "src/lorebook-schema.js",
   "src/lorebook.js",
   "src/llm.js",
     "src/diff.js",
@@ -37,6 +41,7 @@ const files = [
     "src/issue-blacklist.js",
     "src/request-status.js",
     "src/chat-extraction-record.js",
+  "src/ui-state.js",
   "src/utils.js",
 ];
 

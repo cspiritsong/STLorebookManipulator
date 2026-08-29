@@ -9,8 +9,9 @@ import {
   resolveIssue,
 } from "./llm.js";
 import { computeDiff, renderInlineDiff, renderSideBySideDiff } from "./diff.js";
-import { createBackup } from "./backup.js";
 import {
+  executeChangePlans,
+  restoreLorebookBackup,
   updateEntryFields,
   deleteEntry,
   createEntry,
@@ -18,6 +19,7 @@ import {
   loadLorebook,
   parseKeywordString,
 } from "./lorebook.js";
+import { planResolveActions, planRewriteEntry } from "./change-plan.js";
 import { escapeHtml, escapeAttr } from "./utils.js";
 import { renderFriendlyError } from "./errors.js";
 import { filterIgnoredIssues, ignoreIssue } from "./issue-blacklist.js";
@@ -30,6 +32,16 @@ import {
   getChatExtractionRecord,
   recordChatExtraction,
 } from "./chat-extraction-record.js";
+import { getSTContext } from "./st-context.js";
+import {
+  beginUIOperation,
+  cancelUIOperation,
+  completeUIOperation,
+  createUIState,
+  failUIOperation,
+  isCurrentUIOperation,
+  selectBook,
+} from "./ui-state.js";
 
 const PROMPT_PRESETS = {
   prune:
@@ -122,14 +134,53 @@ const sessionCache = {
   loreAssistantHistory: new Map(),
 };
 
+function captureActiveElement() {
+  if (typeof document === "undefined") return null;
+  const active = document.activeElement;
+  return active && active !== document.body ? active : null;
+}
+
+function restoreFocus(element) {
+  if (!element || typeof element.focus !== "function") return;
+  setTimeout(() => {
+    if (element.isConnected === false) return;
+    try {
+      element.focus({ preventScroll: true });
+    } catch {
+      element.focus();
+    }
+  }, 0);
+}
+
+function whenPopupCloses(popup, callback) {
+  const result = popup.show();
+  if (result && typeof result.then === "function") {
+    result.then(() => callback?.(), () => callback?.());
+  } else {
+    callback?.();
+  }
+  return result;
+}
+
 export async function openMainPopup(
   settings,
   context,
   chatRangeRequest = null,
 ) {
+  context = getSTContext(context);
   const { Popup, POPUP_TYPE } = context;
+  const focusReturn = captureActiveElement();
 
-  const bookNames = getLorebookNames(context);
+  let bookNames = [];
+  try {
+    bookNames = getLorebookNames(context);
+  } catch (error) {
+    console.error("[LorebookManipulator] Failed to list lorebooks:", error);
+    if (typeof toastr !== "undefined" && typeof toastr.error === "function") {
+      toastr.error(`SillyTavern compatibility issue: ${error.message}`);
+    }
+    return;
+  }
 
   let optionsHtml =
     '<option value="" disabled selected>-- Choose a lorebook --</option>';
@@ -164,7 +215,7 @@ export async function openMainPopup(
                 <button type="button" id="lm_review_cancel" class="menu_button menu_button_icon" style="display:none;">
                     <i class="fa-solid fa-ban"></i> Cancel Review
                 </button>
-                <div id="lm_review_status" class="lm-status"></div>
+                <div id="lm_review_status" class="lm-status" role="status" aria-live="polite" aria-atomic="true"></div>
                 <div id="lm_issue_list" class="lm-issue-list"></div>
             </div>
 
@@ -184,7 +235,7 @@ export async function openMainPopup(
                 <button type="button" id="lm_chat_generate" class="menu_button menu_button_icon">
                     <i class="fa-solid fa-file-circle-plus"></i> Generate Entry from Messages
                 </button>
-                <div id="lm_chat_status" class="lm-status"></div>
+                <div id="lm_chat_status" class="lm-status" role="status" aria-live="polite" aria-atomic="true"></div>
                 <div id="lm_chat_preview" style="display:none;">
                     <label for="lm_chat_title">Title</label>
                     <input id="lm_chat_title" type="text" class="text_pole" />
@@ -229,6 +280,15 @@ export async function openMainPopup(
                 <label for="lm_popup_max_tokens">Max Response Tokens</label>
                 <input id="lm_popup_max_tokens" type="number" min="256" max="8192" step="256" class="text_pole" value="${settings.maxTokens || 1024}" />
 
+                <label for="lm_popup_review_tokens">Review Response Tokens</label>
+                <input id="lm_popup_review_tokens" type="number" min="256" max="8192" step="256" class="text_pole" value="${settings.reviewMaxTokens || 2048}" />
+
+                <label for="lm_popup_resolve_tokens">Resolve Response Tokens</label>
+                <input id="lm_popup_resolve_tokens" type="number" min="256" max="8192" step="256" class="text_pole" value="${settings.resolveMaxTokens || 2048}" />
+
+                <label for="lm_popup_chat_tokens">Chat / Draft Response Tokens</label>
+                <input id="lm_popup_chat_tokens" type="number" min="256" max="8192" step="256" class="text_pole" value="${settings.chatMaxTokens || 1024}" />
+
                 <label for="lm_popup_review_budget">Review Batch Budget (chars)</label>
                 <input id="lm_popup_review_budget" type="number" min="2000" max="100000" step="1000" class="text_pole" value="${settings.reviewBatchBudget || 12000}" />
                 <small class="lm-field-hint">Character budget per batch for review.</small>
@@ -252,7 +312,7 @@ export async function openMainPopup(
     allowVerticalScrolling: true,
   });
 
-  popup.show();
+  whenPopupCloses(popup, () => restoreFocus(focusReturn));
 
   const container = document.querySelector(".lm-main-popup");
   if (!container) return;
@@ -298,6 +358,9 @@ export async function openMainPopup(
     "#lm_popup_connection_profile",
   );
   const maxTokensInput = container.querySelector("#lm_popup_max_tokens");
+  const reviewTokensInput = container.querySelector("#lm_popup_review_tokens");
+  const resolveTokensInput = container.querySelector("#lm_popup_resolve_tokens");
+  const chatTokensInput = container.querySelector("#lm_popup_chat_tokens");
   const reviewBudgetInput = container.querySelector("#lm_popup_review_budget");
   const backupSection = container.querySelector("#lm_popup_backup_section");
   const backupHistoryEl = container.querySelector("#lm_popup_backup_history");
@@ -306,12 +369,10 @@ export async function openMainPopup(
   // Populate connection profile dropdown
   async function populatePopupConnectionProfiles() {
     if (!connectionProfileSelect) return;
-    const service = context.ConnectionManagerRequestService;
-    if (!service || typeof service.getSupportedProfiles !== "function") return;
 
     let profiles = [];
     try {
-      profiles = service.getSupportedProfiles() || [];
+      profiles = context.getConnectionProfiles();
     } catch (e) {
       console.warn(
         "[LorebookManipulator] Could not list connection profiles:",
@@ -352,6 +413,24 @@ export async function openMainPopup(
     context.saveSettingsDebounced();
   });
 
+  reviewTokensInput?.addEventListener("change", () => {
+    const val = parseInt(reviewTokensInput.value, 10);
+    settings.reviewMaxTokens = Math.max(256, Math.min(8192, val || 2048));
+    context.saveSettingsDebounced();
+  });
+
+  resolveTokensInput?.addEventListener("change", () => {
+    const val = parseInt(resolveTokensInput.value, 10);
+    settings.resolveMaxTokens = Math.max(256, Math.min(8192, val || 2048));
+    context.saveSettingsDebounced();
+  });
+
+  chatTokensInput?.addEventListener("change", () => {
+    const val = parseInt(chatTokensInput.value, 10);
+    settings.chatMaxTokens = Math.max(256, Math.min(8192, val || 1024));
+    context.saveSettingsDebounced();
+  });
+
   // Wire up Review Batch Budget input
   reviewBudgetInput?.addEventListener("change", () => {
     const val = parseInt(reviewBudgetInput.value, 10);
@@ -369,9 +448,9 @@ export async function openMainPopup(
         `Permanently delete ALL backups for "${currentBookName}"? This cannot be undone.`,
       );
       if (!confirmed) return;
-      clearAllBackups(currentBookName);
+      await clearAllBackups(currentBookName);
       toastr.success(`All backups for "${currentBookName}" cleared.`);
-      renderPopupBackupHistory(currentBookName);
+      await renderPopupBackupHistory(currentBookName);
     } catch (e) {
       console.error("[LorebookManipulator] Clear backups failed:", e);
       toastr.error(`Failed to clear backups: ${e.message}`);
@@ -383,7 +462,47 @@ export async function openMainPopup(
   let currentEntries = [];
   let currentBookName = null;
   let reviewController = null;
+  let activeReviewToken = null;
   let pendingChatRange = chatRangeRequest;
+  let uiState = createUIState();
+
+  function resetReviewControls() {
+    if (reviewBtn) reviewBtn.disabled = false;
+    if (multiReviewBtn) multiReviewBtn.disabled = false;
+    if (reviewCancelBtn) {
+      reviewCancelBtn.style.display = "none";
+      reviewCancelBtn.disabled = false;
+    }
+  }
+
+  // A book change invalidates both the current review token and the request
+  // controller. SillyTavern's active-connection generation cannot always abort
+  // immediately, so the token check remains the authoritative stale-result
+  // guard even after the controller has been signalled.
+  function invalidateActiveReview() {
+    const controller = reviewController;
+    reviewController = null;
+    controller?.abort();
+    if (
+      activeReviewToken &&
+      isCurrentUIOperation(uiState, activeReviewToken)
+    ) {
+      uiState = cancelUIOperation(uiState, activeReviewToken);
+    }
+    activeReviewToken = null;
+    resetReviewControls();
+  }
+
+  function startReviewOperation(bookName) {
+    const operation = beginUIOperation(uiState, "review", { bookName });
+    uiState = operation.state;
+    activeReviewToken = operation.token;
+    return operation.token;
+  }
+
+  function isCurrentReview(token) {
+    return isCurrentUIOperation(uiState, token);
+  }
 
   function renderBookOptions(names, selectedName = "") {
     if (!select) return;
@@ -522,7 +641,7 @@ export async function openMainPopup(
       const result = await generateEntryFromChat(
         messages,
         chatInstructions?.value || "",
-        settings.maxTokens,
+        settings.chatMaxTokens || settings.maxTokens,
         context,
         settings.connectionProfileId || null,
         createRequestOptions(chatStatus, "Generating entry draft", settings.requestDelayMs),
@@ -562,7 +681,7 @@ export async function openMainPopup(
         messages,
         draft,
         instruction,
-        settings.maxTokens,
+        settings.chatMaxTokens || settings.maxTokens,
         context,
         settings.connectionProfileId || null,
         createRequestOptions(chatStatus, "Revising entry draft", settings.requestDelayMs),
@@ -607,8 +726,6 @@ export async function openMainPopup(
 
       showStatus(chatStatus, "Adding entry to lorebook...", "loading");
       chatAddBtn.disabled = true;
-      const bookData = await context.loadWorldInfo(currentBookName);
-      createBackup(currentBookName, bookData, settings.backupRetention);
       const uid = await createEntry(currentBookName, fields, context);
       const selectedEnd = Number(chatEndInput?.value);
       const recordedEnd = recordChatExtraction(
@@ -642,15 +759,22 @@ export async function openMainPopup(
   function renderFilteredList() {
     const searchText = searchInput ? searchInput.value : "";
     const filtered = filterEntries(currentEntries, searchText);
+    const bookName = currentBookName;
     renderEntryList(
       entryListEl,
       filtered,
       (entry) => {
-        openRewritePopup(entry, currentBookName, settings, context, null, () =>
-          loadAndRender(currentBookName),
+        openRewritePopup(
+          entry,
+          bookName,
+          settings,
+          context,
+          null,
+          () =>
+            currentBookName === bookName ? loadAndRender(bookName) : undefined,
         );
       },
-      (entry) => handleDeleteEntry(entry, currentBookName),
+      (entry) => handleDeleteEntry(entry, bookName),
     );
   }
 
@@ -661,25 +785,31 @@ export async function openMainPopup(
 
   createEntryBtn?.addEventListener("click", () => {
     if (!currentBookName) return;
-    openCreateEntryPopup(currentBookName, settings, context, loadAndRender);
+    const bookName = currentBookName;
+    openCreateEntryPopup(
+      bookName,
+      settings,
+      context,
+      (name) => (currentBookName === name ? loadAndRender(name) : undefined),
+    );
   });
 
   // Render backup history in the popup with storage indicator
-  async function renderPopupBackupHistory(bookName) {
-    if (!backupHistoryEl) return;
+  async function renderPopupBackupHistory(bookName, isCurrent = () => true) {
+    if (!backupHistoryEl) return true;
     const {
       getBackupHistory,
-      restoreBackup,
       downloadBackup,
       getBackupStorageUsage,
     } = await import("./backup.js");
-    const history = getBackupHistory(bookName);
+    const history = await getBackupHistory(bookName);
+    if (!isCurrent()) return false;
 
     if (history.length === 0) {
       backupHistoryEl.innerHTML =
         '<p class="lm-no-backups">No backups yet.</p>';
       if (clearBackupsBtn) clearBackupsBtn.style.display = "none";
-      return;
+      return true;
     }
 
     backupHistoryEl.innerHTML = "";
@@ -706,24 +836,23 @@ export async function openMainPopup(
               `Restore lorebook "${bookName}" to the state from ${date}? This will overwrite current data.`,
             );
             if (!confirmed) return;
-            restoreBackup(
-              bookName,
-              backup.timestamp,
-              (name, data) => context.saveWorldInfo(name, data),
-              () => context.reloadWorldInfoEditor?.(),
-            );
+            await restoreLorebookBackup(bookName, backup.timestamp, context);
             toastr.success("Backup restored successfully.");
-            await loadAndRender(bookName);
-            renderPopupBackupHistory(bookName);
+            if (currentBookName === bookName) {
+              await loadAndRender(bookName);
+              if (currentBookName === bookName) {
+                await renderPopupBackupHistory(bookName);
+              }
+            }
           } catch (e) {
             console.error("[LorebookManipulator] Restore failed:", e);
             toastr.error(`Restore failed: ${e.message}`);
           }
         });
 
-      item.querySelector(".lm-download-btn").addEventListener("click", () => {
+      item.querySelector(".lm-download-btn").addEventListener("click", async () => {
         try {
-          const filename = downloadBackup(bookName, backup.timestamp);
+          const filename = await downloadBackup(bookName, backup.timestamp);
           toastr.success(`Downloaded: ${filename}`);
         } catch (e) {
           console.error("[LorebookManipulator] Download failed:", e);
@@ -735,7 +864,8 @@ export async function openMainPopup(
     }
 
     // Storage usage indicator
-    const usage = getBackupStorageUsage();
+    const usage = await getBackupStorageUsage();
+    if (!isCurrent()) return false;
     const statusClass = usage.isCritical
       ? "lm-storage-critical"
       : usage.isWarning
@@ -751,16 +881,36 @@ export async function openMainPopup(
       ${usage.isCritical ? '<span class="lm-storage-alert">— clear old backups!</span>' : ""}
     `;
     backupHistoryEl.appendChild(storageEl);
+    return true;
   }
 
   // (Re)load the selected book's entries and render the list. Extracted so it
   // can be called after a delete to refresh the view.
   async function loadAndRender(bookName) {
+    if (uiState.selectedBook !== bookName) {
+      uiState = selectBook(uiState, bookName);
+    }
+    const operation = beginUIOperation(uiState, "load", { bookName });
+    uiState = operation.state;
+    const operationToken = operation.token;
     entryListEl.innerHTML = '<p class="lm-no-backups">Loading...</p>';
     entryListEl.style.display = "block";
+    entryListEl.setAttribute("aria-busy", "true");
     if (entryControlsEl) entryControlsEl.style.display = "block";
 
-    const entries = await loadLorebook(bookName, context);
+    let entries;
+    try {
+      entries = await loadLorebook(bookName, context);
+    } catch (error) {
+      if (isCurrentUIOperation(uiState, operationToken)) {
+        uiState = failUIOperation(uiState, operationToken);
+        entryListEl.setAttribute("aria-busy", "false");
+        throw error;
+      }
+      return false;
+    }
+    if (!isCurrentUIOperation(uiState, operationToken)) return false;
+
     currentEntries = entries;
     currentBookName = bookName;
     sessionCache.entriesByBook.set(bookName, entries);
@@ -773,9 +923,10 @@ export async function openMainPopup(
 
     // Chat-range generation can create an entry even for an empty lorebook.
     const chatCount = Array.isArray(context.chat) ? context.chat.length : 0;
-    if (chatRangeSection)
+    if (chatRangeSection) {
       chatRangeSection.style.display = chatCount > 0 ? "block" : "none";
-      if (chatCount > 0) {
+    }
+    if (chatCount > 0) {
       if (chatRangeHint) {
         chatRangeHint.textContent = `Current chat has ${chatCount} messages. Use 0-based, inclusive indexes (#0 to #${chatCount - 1}).`;
       }
@@ -843,20 +994,34 @@ export async function openMainPopup(
     }
 
     // Render backup history
-    renderPopupBackupHistory(bookName);
+    await renderPopupBackupHistory(bookName, () =>
+      isCurrentUIOperation(uiState, operationToken),
+    );
+    if (!isCurrentUIOperation(uiState, operationToken)) return false;
+
+    uiState = completeUIOperation(uiState, operationToken, {
+      bookName,
+      entries,
+    });
 
     if (entries.length === 0) {
       entryListEl.innerHTML =
         '<p class="lm-no-backups">No entries in this lorebook.</p>';
-      return;
+      entryListEl.setAttribute("aria-busy", "false");
+      return true;
     }
 
     entryListEl.innerHTML = "";
     renderFilteredList();
+    entryListEl.setAttribute("aria-busy", "false");
+    return true;
   }
 
   // Apply fixes for all unresolved issues in bulk.
   async function applyAllFixes(allIssues, reviewData, statusEl) {
+    const targetBookName = currentBookName;
+    if (!targetBookName || sessionCache.review !== reviewData) return;
+
     // Find issues not yet fixed
     const unresolved = allIssues.filter(
       (issue) => !sessionCache.fixedIssues.has(issue),
@@ -872,6 +1037,15 @@ export async function openMainPopup(
       `Apply fixes for ${unresolved.length} issue(s)? Each will be rewritten or deleted according to the review's recommendations.\n\nOne backup per affected lorebook will be created before its first change.`,
     );
     if (!confirmed) return;
+    if (currentBookName !== targetBookName || sessionCache.review !== reviewData) {
+      return;
+    }
+
+    const mutationOperation = beginUIOperation(uiState, "mutation", {
+      bookName: targetBookName,
+    });
+    uiState = mutationOperation.state;
+    const mutationToken = mutationOperation.token;
 
     showStatus(
       statusEl,
@@ -881,35 +1055,31 @@ export async function openMainPopup(
 
     let successCount = 0;
     let failCount = 0;
-    const backedUpBooks = new Set();
     const newFixed = new Set(sessionCache.fixedIssues); // start with already-fixed
-
+    const generatedPlans = [];
     const instructions = sessionCache.instructions || "";
 
-    // Process each unresolved issue
+    // First generate every approved operation plan without mutating any book.
+    // The plans are applied together below, grouped by lorebook.
     for (let i = 0; i < unresolved.length; i++) {
+      if (!isCurrentUIOperation(uiState, mutationToken)) return;
       const issue = unresolved[i];
       showStatus(
         statusEl,
-        `Applying fix ${i + 1}/${unresolved.length}: ${issue.description || "issue"}...`,
+        `Preparing fix ${i + 1}/${unresolved.length}: ${issue.description || "issue"}...`,
         "loading",
       );
 
       try {
-        const issueBookName = issue.bookName || currentBookName;
+        const issueBookName = issue.bookName || targetBookName;
         const issueEntries =
           sessionCache.entriesByBook.get(issueBookName) || currentEntries;
-        if (!backedUpBooks.has(issueBookName)) {
-          const bookData = await context.loadWorldInfo(issueBookName);
-          createBackup(issueBookName, bookData, settings.backupRetention);
-          backedUpBooks.add(issueBookName);
-        }
         if (issue.entries.length === 1) {
-          // Single-entry fix: rewrite content
           const entryUid = issue.entries[0].uid;
           const entryObj = issueEntries.find((e) => e.uid === entryUid);
           if (!entryObj) {
             console.warn(`[ApplyAll] Entry ${entryUid} not found, skipping`);
+            failCount++;
             continue;
           }
 
@@ -922,19 +1092,20 @@ export async function openMainPopup(
             settings.connectionProfileId || null,
             createRequestOptions(
               statusEl,
-              `Fixing issue ${i + 1}/${unresolved.length}`,
+              `Preparing fix ${i + 1}/${unresolved.length}`,
               settings.requestDelayMs,
             ),
           );
-          await updateEntryFields(
-            issueBookName,
-            entryUid,
-            { content: rewrite.rewrittenContent },
-            context,
-          );
+          if (!isCurrentUIOperation(uiState, mutationToken)) return;
+          generatedPlans.push({
+            issue,
+            plan: planRewriteEntry(
+              issueBookName,
+              entryUid,
+              rewrite.rewrittenContent,
+            ),
+          });
         } else {
-          // Multi-entry fix: create a plan and apply all actions
-          // Resolve only entries from this issue's own lorebook.
           const affectedEntries = issue.entries
             .map((e) => issueEntries.find((en) => en.uid === e.uid))
             .filter(Boolean);
@@ -943,51 +1114,41 @@ export async function openMainPopup(
             console.warn(
               `[ApplyAll] No valid affected entries for issue, skipping`,
             );
+            failCount++;
             continue;
           }
 
-          const plan = await resolveIssue(
+          const resolution = await resolveIssue(
             issue,
             affectedEntries,
-            settings.maxTokens,
+            settings.resolveMaxTokens || settings.maxTokens,
             context,
             settings.connectionProfileId || null,
             createRequestOptions(
               statusEl,
-              `Planning fix ${i + 1}/${unresolved.length}`,
+              `Preparing fix ${i + 1}/${unresolved.length}`,
               settings.requestDelayMs,
             ),
           );
-          if (!plan.actions || plan.actions.length === 0) {
+          if (!isCurrentUIOperation(uiState, mutationToken)) return;
+          const actionable = (resolution.actions || []).filter((action) =>
+            ["rewrite", "delete"].includes(action.action),
+          );
+          if (actionable.length === 0) {
             console.warn(
-              `[ApplyAll] Resolve produced no actions for issue, skipping`,
+              `[ApplyAll] Resolve produced no actionable changes for issue, skipping`,
             );
+            failCount++;
             continue;
           }
-
-          // Apply rewrites first, then deletes
-          const rewrites = plan.actions.filter((a) => a.action === "rewrite");
-          const deletes = plan.actions.filter((a) => a.action === "delete");
-
-          for (const a of rewrites) {
-            await updateEntryFields(
-              issueBookName,
-              a.uid,
-              { content: a.newContent },
-              context,
-            );
-          }
-          for (const a of deletes) {
-            await deleteEntry(issueBookName, a.uid, context);
-          }
+          generatedPlans.push({
+            issue,
+            plan: planResolveActions(issueBookName, actionable),
+          });
         }
-
-        // Mark this issue as fixed (cascade computation later)
-        newFixed.add(issue);
-        successCount++;
       } catch (e) {
         console.error(
-          "[LorebookManipulator] ApplyAll failed for issue:",
+          "[LorebookManipulator] ApplyAll planning failed for issue:",
           issue.description,
           e,
         );
@@ -1000,6 +1161,48 @@ export async function openMainPopup(
       // the last issue.
       if (i < unresolved.length - 1) {
         await new Promise((resolve) => setTimeout(resolve, 600));
+        if (!isCurrentUIOperation(uiState, mutationToken)) return;
+      }
+    }
+
+    if (generatedPlans.length > 0) {
+      if (!isCurrentUIOperation(uiState, mutationToken)) return;
+      showStatus(
+        statusEl,
+        `Applying ${generatedPlans.length} verified fix plan(s)...`,
+        "loading",
+      );
+      let result;
+      try {
+        result = await executeChangePlans(
+          generatedPlans.map(({ plan }) => plan),
+          context,
+          { backupRetention: settings.backupRetention },
+        );
+      } catch (error) {
+        if (isCurrentUIOperation(uiState, mutationToken)) {
+          uiState = failUIOperation(uiState, mutationToken);
+        }
+        throw error;
+      }
+      if (!isCurrentUIOperation(uiState, mutationToken)) return;
+      const resultsByBook = new Map(
+        result.results.map((bookResult) => [bookResult.bookName, bookResult]),
+      );
+      for (const { issue } of generatedPlans) {
+        const bookName = issue.bookName || targetBookName;
+        const bookResult = resultsByBook.get(bookName);
+        if (bookResult?.ok) {
+          newFixed.add(issue);
+          successCount++;
+        } else {
+          failCount++;
+          console.error(
+            "[LorebookManipulator] ApplyAll mutation failed for book:",
+            bookName,
+            bookResult?.error,
+          );
+        }
       }
     }
 
@@ -1014,8 +1217,8 @@ export async function openMainPopup(
         uids.some((uid) => {
           for (const fixedIssue of finalFixed) {
             if (
-              (fixedIssue.bookName || currentBookName) ===
-                (issue.bookName || currentBookName) &&
+              (fixedIssue.bookName || targetBookName) ===
+                (issue.bookName || targetBookName) &&
               fixedIssue.entries.some((fe) => fe.uid === uid)
             )
               return true;
@@ -1028,10 +1231,12 @@ export async function openMainPopup(
     }
 
     sessionCache.fixedIssues = finalFixed;
+    if (!isCurrentUIOperation(uiState, mutationToken)) return;
+    uiState = completeUIOperation(uiState, mutationToken);
 
     // Refresh the UI
     showReview(reviewData);
-    await loadAndRender(currentBookName);
+    await loadAndRender(targetBookName);
 
     // Final status
     const msg =
@@ -1056,15 +1261,12 @@ export async function openMainPopup(
     if (!confirmed) return;
 
     try {
-      const bookData = await context.loadWorldInfo(bookName);
-      createBackup(bookName, bookData, settings.backupRetention);
-
       await deleteEntry(bookName, entry.uid, context);
 
       toastr.success(
         `Deleted "${title}". Restore from Backup History if needed.`,
       );
-      await loadAndRender(bookName);
+      if (currentBookName === bookName) await loadAndRender(bookName);
     } catch (e) {
       console.error("[LorebookManipulator] Delete failed:", e);
       entryListEl.innerHTML = renderFriendlyError(e, escapeHtml);
@@ -1074,6 +1276,7 @@ export async function openMainPopup(
   select?.addEventListener("change", async () => {
     const bookName = select.value;
     if (!bookName) return;
+    invalidateActiveReview();
     currentBookName = bookName;
     // Remember the choice; the previous review belonged to a different book.
     sessionCache.bookName = bookName;
@@ -1089,6 +1292,7 @@ export async function openMainPopup(
     } catch (e) {
       console.error("[LorebookManipulator] Failed to load entries:", e);
       entryListEl.style.display = "block";
+      entryListEl.setAttribute("aria-busy", "false");
       entryListEl.innerHTML = renderFriendlyError(e, escapeHtml);
     }
   });
@@ -1102,7 +1306,16 @@ export async function openMainPopup(
   // button and by session restore, so reopening shows the results you already
   // generated instead of a blank panel.
   function showReview(reviewData) {
-    const { issues, batchCount, skippedBatches } = reviewData;
+    const {
+      issues,
+      batchCount,
+      skippedBatches,
+      localIssueCount = 0,
+      crossBatchCandidateCount = 0,
+      crossBatchSkipped = false,
+      emptyObjectResponses = 0,
+    } = reviewData;
+    const reviewBookName = currentBookName;
     const visibleIssues = issues.filter(
       (issue) =>
         filterIgnoredIssues(issue.bookName || currentBookName, [issue]).length >
@@ -1113,6 +1326,18 @@ export async function openMainPopup(
     const skipNote =
       skippedBatches > 0
         ? ` (${skippedBatches} of ${batchCount} batch(es) couldn't be read and were skipped — try raising Max Response Tokens or a more capable model for a complete review.)`
+        : "";
+    const preflightNote =
+      localIssueCount > 0
+        ? ` ${localIssueCount} local preflight finding(s) included.`
+        : "";
+    const crossBatchNote =
+      crossBatchCandidateCount > 0
+        ? ` Checked ${crossBatchCandidateCount} cross-batch candidate pair(s)${crossBatchSkipped ? "; that pass was incomplete" : ""}.`
+        : "";
+    const weakFormatNote =
+      emptyObjectResponses > 0
+        ? ` ${emptyObjectResponses} empty-object response(s) were treated as weak-format results.`
         : "";
 
     if (visibleIssues.length === 0) {
@@ -1134,7 +1359,7 @@ export async function openMainPopup(
     const ignoredNote = ignoredCount > 0 ? ` ${ignoredCount} ignored.` : "";
     showStatus(
       reviewStatus,
-      `Found ${visibleIssues.length} issue(s) across ${batchCount} batch(es). Click an entry to fix it.${fixedNote}${ignoredNote}${skipNote}`,
+      `Found ${visibleIssues.length} issue(s) across ${batchCount} batch(es). Click an entry to fix it.${fixedNote}${ignoredNote}${preflightNote}${crossBatchNote}${weakFormatNote}${skipNote}`,
       "success",
     );
 
@@ -1142,6 +1367,12 @@ export async function openMainPopup(
     // Mark it fixed, then cascade to any other unresolved issues that share
     // the same affected entry uids, refresh the list so badges show, and refresh entries.
     const markFixed = (issue) => {
+      if (
+        currentBookName !== reviewBookName ||
+        sessionCache.review !== reviewData
+      ) {
+        return;
+      }
       sessionCache.fixedIssues = computeCascadeFixedIssues(
         issue,
         issues,
@@ -1149,7 +1380,7 @@ export async function openMainPopup(
       );
 
       showReview(reviewData);
-      loadAndRender(currentBookName);
+      void loadAndRender(reviewBookName);
     };
 
     renderIssueList(
@@ -1159,9 +1390,10 @@ export async function openMainPopup(
       sessionCache.fixedIssues,
       (entry, issue) => {
         // Single-entry issue → open the editor on top; on success mark fixed.
+        const issueBookName = issue.bookName || reviewBookName;
         openRewritePopup(
           entry,
-          issue.bookName || currentBookName,
+          issueBookName,
           settings,
           context,
           issue,
@@ -1171,17 +1403,21 @@ export async function openMainPopup(
       },
       (issue, affectedEntries) => {
         // Multi-entry issue → open the cross-entry resolve flow.
+        const issueBookName = issue.bookName || reviewBookName;
         openResolvePopup(
           issue,
           affectedEntries,
-          issue.bookName || currentBookName,
+          issueBookName,
           settings,
           context,
           () => markFixed(issue),
         );
       },
       (issue) => {
-        ignoreIssue(issue.bookName || currentBookName, issue);
+        if (currentBookName !== reviewBookName || sessionCache.review !== reviewData) {
+          return;
+        }
+        ignoreIssue(issue.bookName || reviewBookName, issue);
         toastr.success(
           "Issue ignored for this lorebook. It will not appear in future reviews.",
         );
@@ -1230,10 +1466,13 @@ export async function openMainPopup(
     const selectedBooks = [...new Set(bookNames)].filter(Boolean);
     if (selectedBooks.length === 0) return;
 
+    const reviewToken = startReviewOperation(currentBookName);
+    const controller = new AbortController();
+    reviewController = controller;
+
     try {
       reviewBtn.disabled = true;
       multiReviewBtn.disabled = true;
-      reviewController = new AbortController();
       if (reviewCancelBtn) {
         reviewCancelBtn.disabled = false;
         reviewCancelBtn.style.display = "inline-block";
@@ -1250,41 +1489,54 @@ export async function openMainPopup(
         batchCount: 0,
         skippedBatches: 0,
         cancelled: false,
+        localIssueCount: 0,
+        crossBatchCandidateCount: 0,
+        crossBatchSkipped: false,
+        emptyObjectResponses: 0,
       };
       sessionCache.entriesByBook = new Map();
 
       for (let bookIndex = 0; bookIndex < selectedBooks.length; bookIndex++) {
-        if (reviewController.signal.aborted) {
+        if (!isCurrentReview(reviewToken) || controller.signal.aborted) {
           aggregate.cancelled = true;
           break;
         }
         const bookName = selectedBooks[bookIndex];
         const entries = await loadLorebook(bookName, context);
+        if (!isCurrentReview(reviewToken)) return;
         sessionCache.entriesByBook.set(bookName, entries);
         if (entries.length === 0) continue;
+
+        const reportRequestProgress = createRequestProgressReporter(
+          reviewStatus,
+          `Reviewing ${bookName}`,
+        );
 
         const review = await reviewEntries(
           entries,
           reviewInstructions.value,
-          settings.maxTokens,
+          settings.reviewMaxTokens || settings.maxTokens,
           context,
           {
             profileId: settings.connectionProfileId || null,
             maxBatchChars: settings.reviewBatchBudget,
-            signal: reviewController.signal,
+            reviewResponseLength: settings.reviewMaxTokens || settings.maxTokens,
+            signal: controller.signal,
             requestDelayMs: settings.requestDelayMs,
-            onRequestProgress: createRequestProgressReporter(
-              reviewStatus,
-              `Reviewing ${bookName}`,
-            ),
+            onRequestProgress: (progress) => {
+              if (isCurrentReview(reviewToken)) reportRequestProgress(progress);
+            },
             onRequestFailure: (error) =>
-              waitForRequestContinue(
-                reviewStatus,
-                `Reviewing ${bookName}`,
-                error,
-                reviewController.signal,
-              ),
+              isCurrentReview(reviewToken)
+                ? waitForRequestContinue(
+                    reviewStatus,
+                    `Reviewing ${bookName}`,
+                    error,
+                    controller.signal,
+                  )
+                : false,
             onProgress: (current, total) => {
+              if (!isCurrentReview(reviewToken)) return;
               showStatus(
                 reviewStatus,
                 `Reviewing ${bookIndex + 1}/${selectedBooks.length}: ${bookName} (batch ${current}/${total})`,
@@ -1293,17 +1545,26 @@ export async function openMainPopup(
             },
           },
         );
+        if (!isCurrentReview(reviewToken)) return;
         aggregate.issues.push(
           ...review.issues.map((issue) => ({ ...issue, bookName })),
         );
         aggregate.batchCount += review.batchCount;
         aggregate.skippedBatches += review.skippedBatches;
+        aggregate.localIssueCount += review.localIssueCount || 0;
+        aggregate.crossBatchCandidateCount += review.crossBatchCandidateCount || 0;
+        aggregate.crossBatchSkipped ||= Boolean(review.crossBatchSkipped);
+        aggregate.emptyObjectResponses += review.emptyObjectResponses || 0;
         if (review.cancelled) {
           aggregate.cancelled = true;
           break;
         }
       }
 
+      if (!isCurrentReview(reviewToken)) return;
+      uiState = completeUIOperation(uiState, reviewToken, {
+        review: aggregate,
+      });
       sessionCache.review = aggregate;
       sessionCache.fixedIssues = new Set();
       showReview(aggregate);
@@ -1316,14 +1577,15 @@ export async function openMainPopup(
       }
     } catch (e) {
       console.error("[LorebookManipulator] Multi-lorebook review failed:", e);
-      showFriendlyError(reviewStatus, e);
+      if (isCurrentReview(reviewToken)) {
+        uiState = failUIOperation(uiState, reviewToken);
+        showFriendlyError(reviewStatus, e);
+      }
     } finally {
-      reviewController = null;
-      reviewBtn.disabled = false;
-      multiReviewBtn.disabled = false;
-      if (reviewCancelBtn) {
-        reviewCancelBtn.style.display = "none";
-        reviewCancelBtn.disabled = false;
+      if (activeReviewToken === reviewToken) {
+        activeReviewToken = null;
+        if (reviewController === controller) reviewController = null;
+        resetReviewControls();
       }
     }
   }
@@ -1357,9 +1619,12 @@ export async function openMainPopup(
   reviewBtn?.addEventListener("click", async () => {
     if (!currentBookName || currentEntries.length === 0) return;
 
+    const reviewToken = startReviewOperation(currentBookName);
+    const controller = new AbortController();
+    reviewController = controller;
+
     try {
       reviewBtn.disabled = true;
-      reviewController = new AbortController();
       if (reviewCancelBtn) {
         reviewCancelBtn.disabled = false;
         reviewCancelBtn.style.display = "inline-block";
@@ -1367,28 +1632,36 @@ export async function openMainPopup(
       issueListEl.innerHTML = "";
       showStatus(reviewStatus, "Reviewing entries...", "loading");
 
+      const reportRequestProgress = createRequestProgressReporter(
+        reviewStatus,
+        "Reviewing lorebook",
+      );
+
       const reviewData = await reviewEntries(
         currentEntries,
         reviewInstructions.value,
-        settings.maxTokens,
+        settings.reviewMaxTokens || settings.maxTokens,
         context,
         {
           profileId: settings.connectionProfileId || null,
           maxBatchChars: settings.reviewBatchBudget,
-          signal: reviewController.signal,
+          reviewResponseLength: settings.reviewMaxTokens || settings.maxTokens,
+          signal: controller.signal,
           requestDelayMs: settings.requestDelayMs,
-          onRequestProgress: createRequestProgressReporter(
-            reviewStatus,
-            "Reviewing lorebook",
-          ),
+          onRequestProgress: (progress) => {
+            if (isCurrentReview(reviewToken)) reportRequestProgress(progress);
+          },
           onRequestFailure: (error) =>
-            waitForRequestContinue(
-              reviewStatus,
-              "Reviewing lorebook",
-              error,
-              reviewController.signal,
-            ),
+            isCurrentReview(reviewToken)
+              ? waitForRequestContinue(
+                  reviewStatus,
+                  "Reviewing lorebook",
+                  error,
+                  controller.signal,
+                )
+              : false,
           onProgress: (current, total) => {
+            if (!isCurrentReview(reviewToken)) return;
             showStatus(
               reviewStatus,
               `Reviewing... batch ${current} of ${total}`,
@@ -1397,6 +1670,11 @@ export async function openMainPopup(
           },
         },
       );
+
+      if (!isCurrentReview(reviewToken)) return;
+      uiState = completeUIOperation(uiState, reviewToken, {
+        review: reviewData,
+      });
 
       // Cache the (token-costly) results so Close/reopen doesn't lose them.
       sessionCache.review = reviewData;
@@ -1411,13 +1689,15 @@ export async function openMainPopup(
       }
     } catch (e) {
       console.error("[LorebookManipulator] Review failed:", e);
-      showFriendlyError(reviewStatus, e);
+      if (isCurrentReview(reviewToken)) {
+        uiState = failUIOperation(uiState, reviewToken);
+        showFriendlyError(reviewStatus, e);
+      }
     } finally {
-      reviewBtn.disabled = false;
-      reviewController = null;
-      if (reviewCancelBtn) {
-        reviewCancelBtn.style.display = "none";
-        reviewCancelBtn.disabled = false;
+      if (activeReviewToken === reviewToken) {
+        activeReviewToken = null;
+        if (reviewController === controller) reviewController = null;
+        resetReviewControls();
       }
     }
   });
@@ -1466,12 +1746,21 @@ function renderEntryList(container, entries, onEntryClick, onDeleteClick) {
 
     const body = document.createElement("div");
     body.className = "lm-entry-body";
+    body.setAttribute("role", "button");
+    body.tabIndex = 0;
+    body.setAttribute("aria-label", `Edit ${name}`);
     body.innerHTML = `
             <div class="lm-entry-name">${escapeHtml(name)}</div>
             <div class="lm-entry-keys">${escapeHtml(keys)}</div>
             <div class="lm-entry-preview">${escapeHtml(preview)}</div>
         `;
-    body.addEventListener("click", () => onEntryClick(entry));
+    const openEditor = () => onEntryClick(entry);
+    body.addEventListener("click", openEditor);
+    body.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      openEditor();
+    });
     item.appendChild(body);
 
     if (typeof onDeleteClick === "function") {
@@ -1479,10 +1768,17 @@ function renderEntryList(container, entries, onEntryClick, onDeleteClick) {
       del.type = "button";
       del.className = "menu_button lm-entry-delete";
       del.title = "Delete this entry";
+      del.setAttribute("aria-label", `Delete ${name}`);
       del.innerHTML = '<i class="fa-solid fa-trash"></i>';
-      del.addEventListener("click", (ev) => {
+      del.addEventListener("click", async (ev) => {
         ev.stopPropagation();
-        onDeleteClick(entry);
+        if (del.disabled) return;
+        del.disabled = true;
+        try {
+          await onDeleteClick(entry);
+        } finally {
+          del.disabled = false;
+        }
       });
       item.appendChild(del);
     }
@@ -1612,6 +1908,7 @@ export async function openRewritePopup(
   onClose = null,
   onSuccess = null,
 ) {
+  context = getSTContext(context);
   const { Popup, POPUP_TYPE } = context;
 
   // Base instruction comes from the preset/custom prompt. When the user
@@ -1679,7 +1976,7 @@ export async function openRewritePopup(
         message,
         assistantHistory,
         `Editing entry: ${entry.comment || "(untitled)"}\n${contentInput?.value || ""}`,
-        settings.maxTokens,
+        settings.chatMaxTokens || settings.maxTokens,
         context,
         settings.connectionProfileId || null,
         createRequestOptions(statusEl, "Lore Assistant", settings.requestDelayMs),
@@ -1838,9 +2135,6 @@ export async function openRewritePopup(
       approveBtn.disabled = true;
       rejectBtn.disabled = true;
 
-      const bookData = await context.loadWorldInfo(bookName);
-      createBackup(bookName, bookData, settings.backupRetention);
-
       await updateEntryFields(bookName, entry.uid, fields, context);
 
       showStatus(statusEl, "Changes saved successfully!", "success");
@@ -1875,6 +2169,7 @@ export async function openResolvePopup(
   context,
   onSuccess = null,
 ) {
+  context = getSTContext(context);
   const { Popup, POPUP_TYPE } = context;
 
   const affectedList = affectedEntries
@@ -1892,7 +2187,7 @@ export async function openResolvePopup(
         <p class="lm-resolve-affected-title">Affected entries:</p>
         <ul class="lm-resolve-affected-list">${affectedList}</ul>
 
-        <div id="lm_resolve_status" class="lm-status"></div>
+        <div id="lm_resolve_status" class="lm-status" role="status" aria-live="polite" aria-atomic="true"></div>
         <div id="lm_resolve_plan" class="lm-resolve-plan"></div>
 
         <div class="lm-popup-actions">
@@ -1941,7 +2236,7 @@ export async function openResolvePopup(
       const plan = await resolveIssue(
         issue,
         affectedEntries,
-        settings.maxTokens,
+        settings.resolveMaxTokens || settings.maxTokens,
         context,
         settings.connectionProfileId || null,
         createRequestOptions(
@@ -2002,25 +2297,18 @@ export async function openResolvePopup(
       applyBtn.disabled = true;
       generateBtn.disabled = true;
 
-      // One backup before the whole batch of changes.
-      const bookData = await context.loadWorldInfo(bookName);
-      createBackup(bookName, bookData, settings.backupRetention);
-
-      // Apply rewrites first, then deletes (so a delete can't shift a
-      // rewrite target — uids are stable anyway, but this is tidy).
       const rewrites = toApply.filter((a) => a.action === "rewrite");
       const deletes = toApply.filter((a) => a.action === "delete");
-
-      for (const a of rewrites) {
-        await updateEntryFields(
-          bookName,
-          a.uid,
-          { content: a.newContent },
-          context,
+      const result = await executeChangePlans(
+        [planResolveActions(bookName, toApply)],
+        context,
+        { backupRetention: settings.backupRetention },
+      );
+      if (!result.ok) {
+        throw new Error(
+          result.failed?.[0]?.error?.message ||
+            "The approved resolution could not be verified after saving.",
         );
-      }
-      for (const a of deletes) {
-        await deleteEntry(bookName, a.uid, context);
       }
 
       showStatus(
@@ -2054,6 +2342,7 @@ export async function openCreateEntryPopup(
   context,
   onRefresh,
 ) {
+  context = getSTContext(context);
   const { Popup, POPUP_TYPE } = context;
 
   const popupHtml = `<div class="lm-create-entry-popup">
@@ -2076,7 +2365,7 @@ export async function openCreateEntryPopup(
       <button type="button" id="lm_ce_generate" class="menu_button">Generate Draft</button>
       <button type="button" id="lm_ce_impact" class="menu_button">Check Lorebook Impact</button>
     </div>
-    <div id="lm_ce_status" class="lm-status"></div>
+    <div id="lm_ce_status" class="lm-status" role="status" aria-live="polite" aria-atomic="true"></div>
     <div id="lm_ce_diff" class="lm-diff-container" style="display:none;"></div>
     <div id="lm_ce_impact_results" class="lm-issue-list"></div>
     <div class="lm-chat-range-section"><h4>Lore Assistant</h4><div id="lm_ce_assistant_history" class="lm-chat-history"></div><textarea id="lm_ce_assistant_message" class="text_pole textarea_compact" rows="2" placeholder="Talk through the entry idea naturally..."></textarea><div class="lm-popup-actions"><button type="button" id="lm_ce_assistant_send" class="menu_button">Send</button><button type="button" id="lm_ce_assistant_draft" class="menu_button">Create Draft from Conversation</button></div></div>
@@ -2090,7 +2379,7 @@ export async function openCreateEntryPopup(
     allowVerticalScrolling: true,
   });
 
-  popup.show();
+  const popupResult = popup.show();
 
   const container = document.querySelector(".lm-create-entry-popup");
   if (!container) return;
@@ -2145,7 +2434,7 @@ export async function openCreateEntryPopup(
       generateBtn.disabled = true;
       const draft = await generateEntryFromInstructions(
         instructionsInput?.value || "",
-        settings.maxTokens,
+        settings.chatMaxTokens || settings.maxTokens,
         context,
         settings.connectionProfileId || null,
         createRequestOptions(statusEl, "Generating entry draft", settings.requestDelayMs),
@@ -2168,7 +2457,7 @@ export async function openCreateEntryPopup(
     try {
       assistantSend.disabled = true;
       const message = assistantMessage?.value || "";
-      const reply = await chatAboutLore(message, assistantHistory, "Creating a new lorebook entry.", settings.maxTokens, context, settings.connectionProfileId || null, createRequestOptions(statusEl, "Lore Assistant", settings.requestDelayMs));
+      const reply = await chatAboutLore(message, assistantHistory, "Creating a new lorebook entry.", settings.chatMaxTokens || settings.maxTokens, context, settings.connectionProfileId || null, createRequestOptions(statusEl, "Lore Assistant", settings.requestDelayMs));
       assistantHistory.push({ role: "user", content: message }, { role: "assistant", content: reply });
       if (assistantHistory.length > 20) assistantHistory.splice(0, assistantHistory.length - 20);
       sessionCache.loreAssistantHistory.set(assistantKey, assistantHistory);
@@ -2189,7 +2478,7 @@ export async function openCreateEntryPopup(
       const impact = await checkEntryImpact(
         readDraft(),
         await loadLorebook(bookName, context),
-        settings.maxTokens,
+        settings.chatMaxTokens || settings.maxTokens,
         context,
         settings.connectionProfileId || null,
         createRequestOptions(statusEl, "Checking lorebook impact", settings.requestDelayMs),
@@ -2209,7 +2498,7 @@ export async function openCreateEntryPopup(
   setTimeout(() => titleInput?.focus(), 100);
 
   // Wait for the user to confirm or cancel
-  const result = await popup.result;
+  const result = await popupResult;
   if (result === undefined || result === null || result === false) return;
 
   const title = titleInput?.value?.trim() || "";
@@ -2223,10 +2512,6 @@ export async function openCreateEntryPopup(
   }
 
   try {
-    // Create backup before modifying
-    const bookData = await context.loadWorldInfo(bookName);
-    createBackup(bookName, bookData, settings.backupRetention);
-
     const newUid = await createEntry(
       bookName,
       {
@@ -2239,7 +2524,7 @@ export async function openCreateEntryPopup(
     );
 
     toastr.success(`Entry created (UID ${newUid}).`);
-    if (typeof onRefresh === "function") onRefresh(bookName);
+    if (typeof onRefresh === "function") await onRefresh(bookName);
   } catch (e) {
     console.error("[LorebookManipulator] Create entry failed:", e);
     toastr.error(`Failed to create entry: ${e.message}`);
@@ -2355,7 +2640,7 @@ function buildPopupHtml(entry, issue = null) {
 
         <div id="lm_justification_container" style="display:none;"></div>
 
-        <div id="lm_status" class="lm-status"></div>
+        <div id="lm_status" class="lm-status" role="status" aria-live="polite" aria-atomic="true"></div>
 
         <div class="lm-popup-actions">
             <button type="button" id="lm_generate_btn" class="menu_button menu_button_icon">

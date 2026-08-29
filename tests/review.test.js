@@ -247,6 +247,10 @@ assert(
   parseReviewResponse("{}").issues.length === 0,
   "Empty object yields no issues (not an error)",
 );
+assert(
+  parseReviewResponse("{}").format === "empty-object",
+  "Empty object response is distinguished from an explicit issues array",
+);
 
 // A bare empty array means "no issues found"
 assert(
@@ -349,8 +353,54 @@ await (async () => {
   // Every reply is unreadable -> the whole review fails.
   const ctx = makeMockContext(["garbage"]);
   await assertRejects(
-    reviewEntries(bigEntries, "", 2048, ctx),
+    reviewEntries(bigEntries, "", 2048, ctx, { localPreflight: false }),
     "Whole review rejects only when every batch is unreadable",
+  );
+})();
+
+await (async () => {
+  const crossBatchEntries = [
+    {
+      uid: 101,
+      comment: "Eastern Gate",
+      key: ["mountain gate"],
+      content: "a".repeat(6000),
+    },
+    {
+      uid: 102,
+      comment: "Western Camp",
+      key: ["mountain gate"],
+      content: "b".repeat(6000),
+    },
+  ];
+  const crossIssue = JSON.stringify({
+    issues: [
+      {
+        type: "overlap",
+        severity: "medium",
+        description: "The entries share a cross-batch activation key.",
+        entries: [
+          { uid: 101, name: "Eastern Gate" },
+          { uid: 102, name: "Western Camp" },
+        ],
+      },
+    ],
+  });
+  const ctx = makeMockContext([
+    JSON.stringify({ issues: [] }),
+    JSON.stringify({ issues: [] }),
+    crossIssue,
+  ]);
+  const res = await reviewEntries(crossBatchEntries, "", 2048, ctx, {
+    crossBatchReview: true,
+  });
+  assert(
+    res.crossBatchCandidateCount === 1,
+    "Cross-batch review reports the number of targeted candidate pairs",
+  );
+  assert(
+    res.issues.some((issue) => issue.entries.some((entry) => entry.uid === 101)),
+    "Cross-batch review includes the targeted model finding",
   );
 })();
 

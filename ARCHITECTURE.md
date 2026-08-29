@@ -16,6 +16,7 @@ STLorebookManipulator/
 │   ├── backup.js          # Backup history management, restore, file download
 │   ├── lorebook.js        # Load/save/reload lorebook data via ST World Info API
 │   ├── llm.js             # Rate-limited LLM queue, calls for rewrite/review/resolve/chat drafts, JSON schema parsing
+│   ├── review-analysis.js # Deterministic preflight, cross-batch candidates, issue deduplication
 │   ├── diff.js            # Word-level diff computation, inline/side-by-side HTML rendering
 │   ├── ui.js              # Popup creation, entry editor, review/issue list, resolve flow, handlers
 │   ├── errors.js          # Maps raw errors to newbie-friendly title/what/fix guidance
@@ -52,15 +53,37 @@ STLorebookManipulator/
 - Exposes no global functions (self-contained ES module)
 
 ### src/backup.js — Backup History
-- **createBackup(bookName, bookData)**: Deep-clones lorebook data, stores in localStorage with timestamp. Enforces retention limit.
-- **getBackupHistory(bookName)**: Returns array of backup entries sorted newest-first.
-- **restoreBackup(bookName, timestamp)**: Retrieves backup by timestamp, saves via `saveWorldInfo()`, reloads editor.
-- **downloadBackup(bookName, timestamp)**: Triggers browser file download of backup as `.json`.
+- **createBackup(bookName, bookData)**: Deep-clones lorebook data, stores through the configured storage adapter with timestamp. Enforces retention limit.
+- **getBackupHistory(bookName)**: Returns backup entries sorted newest-first; supports synchronous and awaitable storage adapters.
+- **restoreBackup(bookName, timestamp)**: Retrieves backup by timestamp, awaits save/reload/optional read-back verification.
+- **downloadBackup(bookName, timestamp)**: Triggers browser file download of backup as `.json`, including awaitable storage.
 - Storage key format: `lorebook_manipulator_backups_<bookName>`
 
+### src/change-plan.js — Safe Mutation Plans
+- Normalizes add/edit/rewrite/delete/keep operations into a serializable plan containing only the four editable entry fields.
+- Applies plans to deep clones, preserving structural and unknown fields, and returns a per-operation result ledger.
+- Groups plans by lorebook so bulk workflows can create one backup, save once, and verify one book at a time.
+
+### src/review-analysis.js — Review Preflight and Candidates
+- `findLocalReviewIssues(entries)` detects duplicate titles/content, shared keys, empty content, and locally oversized entries without an LLM call.
+- `buildCrossBatchCandidates(entries, batches)` selects a bounded set of cross-batch pairs with shared keys or meaningful title overlap.
+- `dedupeReviewIssues(issues)` removes duplicate type/UID findings produced by local and model passes.
+
+### src/st-context.js — SillyTavern Compatibility Boundary
+- **getSTContext(context?)**: Resolves `SillyTavern.getContext()` once and returns a guarded adapter. The adapter also proxies UI-only context values without exposing raw API calls to feature modules.
+- **detectCapabilities(context)**: Reports the available World Info, editor reload, generation, connection-profile, event, and cancellation capabilities without invoking them.
+- Adapter methods centralize `getWorldInfoNames`, `loadWorldInfo`, `saveWorldInfo`, `reloadWorldInfoEditor`, `generateRaw`, connection-profile listing/request routing, and optional generation stopping. Missing required methods throw typed errors with a stable capability code.
+
+### src/lorebook-schema.js — Lorebook Data Contract
+- **normalizeLorebook(data, options)**: Validates the minimum World Info shape, deep-clones the document, normalizes required entry fields, rejects malformed entries/duplicate UIDs, and preserves unknown root/entry fields.
+- **normalizeLorebookEntry(entry, entryKey, options)**: Normalizes one entry and falls back to a numeric object key when SillyTavern omits `uid`.
+- **getLorebookEntries(data, options)**: Returns normalized entry values for read-only UI workflows.
+- `LorebookSchemaError` uses `code: "LOREBOOK_INVALID"` so the UI can explain a malformed book without attempting a mutation.
+
 ### src/lorebook.js — Lorebook Data Access
-- **getLorebookNames()**: Wraps `getWorldInfoNames()` to list available books.
-- **loadLorebook(name)**: Wraps `loadWorldInfo(name)`, returns normalized entry array.
+- **getLorebookNames()**: Uses the SillyTavern compatibility adapter to list available books.
+- **loadLorebookData(name)**: Loads and validates a complete, normalized document for backups and mutation workflows.
+- **loadLorebook(name)**: Returns the normalized entry array from `loadLorebookData`, preserving unknown fields for review/UI mapping.
 - **sanitizeEntryFields(fields)**: Validates/normalizes an incoming field set. Keeps only the four editable fields (`content`, `key`, `keysecondary`, `comment`), enforces types, trims/drops empty keywords. Throws on type errors so bad input fails loudly. Unit-tested.
 - **parseKeywordString(str)**: UI helper — splits a comma-separated keyword string into a clean array.
 - **updateEntryFields(bookName, uid, fields, context)**: Loads book, writes only the sanitized editable fields of the matching entry, saves, reloads editor. All other (structural) fields are preserved.
@@ -74,13 +97,13 @@ STLorebookManipulator/
 - After automatic retries are exhausted, callers can provide `onRequestFailure`. The UI uses it to pause the failed LLM request and offer Continue, which retries only that request without discarding completed review batches or bulk-fix progress. Save/delete operations are not replayed automatically because they mutate data.
 - **generateRewrite(entryContent, promptText, maxTokens, context, profileId=null)**: Single-entry rewrite with structured output. Returns `{ rewrittenContent, justification }`.
 - **generateEntryFromInstructions(...)**: Creates an editable all-field entry draft from user instructions. **checkEntryImpact(...)**: optionally checks that draft against the selected lorebook for duplicates, overlaps, or contradictions before save.
-- **reviewEntries(entries, instructions, maxTokens, context, options)**: Whole-book review. Auto-batches entries via `batchEntries`, sends each batch with the review JSON schema, and combines results into one issue list. Retries an unreadable batch once with a strict format reminder, then skips it (non-fatal). Reports progress via `options.onProgress(current, total)`. `options.profileId` selects a connection profile. Returns `{ issues, batchCount, skippedBatches }`; throws only if every batch is unreadable.
+- **reviewEntries(entries, instructions, maxTokens, context, options)**: Whole-book review. Runs deterministic preflight, auto-batches entries via `batchEntries`, sends each batch with the review JSON schema, and performs one bounded cross-batch candidate pass when lexical candidates exist. Retries unreadable calls once with a strict format reminder, then skips them (non-fatal). Returns `{ issues, batchCount, skippedBatches, localIssueCount, crossBatchCandidateCount, crossBatchSkipped, emptyObjectResponses }`; `reviewResponseLength` and `crossBatchResponseLength` are independent from rewrite/resolve/chat budgets.
 - **resolveIssue(issue, affectedEntries, maxTokens, context, profileId=null)**: Generates a cross-entry resolution plan for one multi-entry issue. Returns `{ summary, actions: [{ uid, action: 'keep'|'rewrite'|'delete', newContent, reason }] }` via `RESOLVE_SCHEMA`.
-- **callLLM({ systemPrompt, prompt, responseLength, jsonSchema, profileId }, context)** (internal): The request router. When `profileId` is set, sends through `ConnectionManagerRequestService.sendRequest()` (json_schema passed as an override payload); otherwise uses `generateRaw()` on the active connection. Returns a normalized string.
+- **callLLM({ systemPrompt, prompt, responseLength, jsonSchema, profileId }, context)** (internal): The request router. It uses the SillyTavern compatibility adapter for active generation or, when `profileId` is set, connection-profile requests (json_schema passed as an override payload). Returns a normalized string.
 - **normalizeLLMContent(result)**: Collapses every response shape into a single JSON string. `generateRaw` returns a string; `ConnectionManagerRequestService` returns `ExtractedData` whose `.content` is a string normally but an already-*parsed object* when json_schema is used. This helper re-stringifies parsed objects so the parsers below work identically across backends. Unit-tested.
 - **batchEntries(entries, maxBatchChars=12000)**: Pure function that splits entries into batches so each batch's combined text stays under a character budget. An oversized single entry gets its own batch (never dropped). Unit-tested directly.
 - **parseLLMResponse(rawText)**: Validates and returns the rewrite result.
-- **parseReviewResponse(rawText)**: Forgiving review parser — accepts `{issues:[...]}`, a bare array, a differently-named array property, or an empty `{}` (= no issues). Drops malformed/description-less issues, coerces invalid type/severity to safe defaults, coerces string uids to numbers.
+- **parseReviewResponse(rawText)**: Forgiving review parser — accepts `{issues:[...]}`, a bare array, a differently-named array property, or an empty `{}` (= no issues). Returns a `format` marker so weak empty-object replies are measurable rather than confused with an explicit `issues` array.
 - **parseResolveResponse(rawText, affectedEntries)**: Forgiving resolution parser — finds the actions array, coerces uids/actions, downgrades an empty rewrite to "keep", and drops actions targeting uids outside the issue. Throws if no usable actions remain.
 - **extractJson(rawText)** (internal): Shared JSON extraction (handles code fences, surrounding prose, and a bare top-level object **or** array). Used by all parsers so the logic lives in one place.
 - ST's `generateRaw` uses `responseLength` (not `max_tokens`) and, when `jsonSchema` is set, returns the extracted JSON string directly.
@@ -104,10 +127,10 @@ STLorebookManipulator/
 - **openRewritePopup(entry, bookName, settings, context, issue=null, onClose=null, onSuccess=null)**: The entry editor popup. Editable inputs for title, primary keys, secondary keys, and an always-visible **content textarea** (shows the current content). Optional **Generate Suggestion** rewrites the content: it diffs against the current box text, shows the highlighted diff, and drops the suggestion into the box for further tweaking. **Save** writes all four editable fields (content read straight from the box), backs up first, then calls `updateEntryFields`, and fires `onSuccess` (used to mark a review issue FIXED). Stacks on top of the main popup; `onClose` runs whenever the popup is dismissed. When opened from a review `issue`, shows an issue banner, appends the issue to the rewrite instruction, and labels the dismiss button "← Back to issues". Errors surface via `showFriendlyError`.
 - **renderEntryList(container, entries, onEntryClick, onDeleteClick)** (internal): Renders each entry with a clickable body (opens editor) and a trash button (delete). The trash click stops propagation so it doesn't also open the editor.
 - **renderIssueList(container, issues, entries, fixedIssues, onFixClick, onResolveClick)** (internal): Renders review issues as severity-colored cards. A single-entry issue shows a per-entry chip (→ `onFixClick`, opens the editor). A multi-entry issue shows one "Resolve N entries together" button (→ `onResolveClick`). Issues in the `fixedIssues` Set get a **FIXED!** badge and are dimmed. Chips for unresolvable uids are disabled.
-- **openResolvePopup(issue, affectedEntries, bookName, settings, context, onSuccess=null)**: The cross-entry resolution popup. **Generate Fix Plan** calls `resolveIssue` on demand; the plan renders one row per action (keep/rewrite/delete) with a checkbox, a content diff for rewrites, and a warning for deletes. **Apply Selected** takes one backup, then applies only the ticked rewrites (`updateEntryFields`) and deletes (`deleteEntry`), and fires `onSuccess` to mark the issue FIXED. Stacks on top; dismiss button reads "← Back to issues".
+- **openResolvePopup(issue, affectedEntries, bookName, settings, context, onSuccess=null)**: The cross-entry resolution popup. **Generate Fix Plan** calls `resolveIssue` on demand; the plan renders one row per action (keep/rewrite/delete) with a checkbox, a content diff for rewrites, and a warning for deletes. **Apply Selected** sends checked actions through the grouped verified mutation pipeline and fires `onSuccess` to mark the issue FIXED. Stacks on top; dismiss button reads "← Back to issues".
 - Fixed-tracking lives in `sessionCache.fixedIssues` (a Set of issue objects, by identity), so the FIXED badge survives Close/reopen and resets on a new review or book change.
 - **renderResolvePlan(container, plan, byUid, settings)** (internal): Renders the action rows; rewrite/delete are ticked by default, keep is shown disabled.
-- Save triggers: backup → updateEntryFields → close popup. Delete triggers: confirm → backup → deleteEntry → refresh list. Resolve triggers: generate plan → user toggles actions → backup → apply checked. Cancel simply closes.
+- Save triggers: verified mutation plan → backup → save → read-back → close popup. Delete triggers: confirm → verified mutation plan → refresh list. Resolve and Apply All trigger: generate plan → user approves actions → grouped per-book backup/save/read-back. Cancel simply closes.
 
 ### src/utils.js — Shared Helpers
 - **escapeHtml(text)**: Escapes `& < > " '` for safe insertion into HTML content. Pure string implementation (no DOM dependency) so it works in both browser and Node test environments.
@@ -124,7 +147,7 @@ STLorebookManipulator/
 ```
 User selects lorebook
     ↓
-lorebook.js loads entries via ST API
+lorebook.js loads and validates entries via the ST compatibility adapter
     ↓
 User clicks entry → ui.js opens editor popup
     ↓
@@ -173,7 +196,10 @@ Settings stored in `SillyTavern.getContext().extensionSettings['lorebook_manipul
     backupRetention: 5,            // number of backups to keep per lorebook
     promptPreset: 'prune',         // 'prune' | 'clarify' | 'grammar' | 'custom'
     customPrompt: '',              // user-defined prompt text
-    maxTokens: 1024,               // max LLM response tokens (rewrite & review)
+    maxTokens: 1024,               // rewrite response tokens
+    reviewMaxTokens: 2048,         // review response tokens
+    resolveMaxTokens: 2048,        // resolve response tokens
+    chatMaxTokens: 1024,           // chat/draft/assistant response tokens
     reviewBatchBudget: 12000,      // char budget per batch for whole-book review
     connectionProfileId: ''        // '' = active connection; else a Connection Manager profile id
 }

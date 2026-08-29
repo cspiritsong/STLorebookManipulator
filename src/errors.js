@@ -10,6 +10,29 @@
 const RULES = [
   {
     match: [
+      "st_capability_missing",
+      "st_context_unavailable",
+      "sillytavern capability",
+      "sillytavern.getcontext",
+    ],
+    title: "SillyTavern compatibility issue",
+    what: "This version of SillyTavern does not expose one of the APIs the extension needs for that action.",
+    fix: "Reload SillyTavern and confirm the extension is running in a supported version. If the problem continues, report the missing capability and your SillyTavern version so the adapter can be updated safely.",
+  },
+  {
+    match: [
+      "lorebook_invalid",
+      "invalid lorebook data",
+      "invalid lorebook entry",
+      "lorebook schema",
+      "entries must be an object",
+    ],
+    title: "The lorebook data is malformed",
+    what: "SillyTavern returned a lorebook that does not have the minimum World Info shape, so the extension stopped before changing it.",
+    fix: "Open the lorebook in SillyTavern's World Info editor and save or repair it there. If it still fails, restore a known-good backup and report the book shape without applying changes.",
+  },
+  {
+    match: [
       "could not parse",
       "invalid json",
       "not valid json",

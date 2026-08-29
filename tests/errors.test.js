@@ -114,6 +114,24 @@ assert(
 const emptyErr = explainError(new Error("There are no entries to review."));
 assert(/no entries/i.test(emptyErr.title), "Empty-lorebook error recognized");
 
+const capabilityErr = explainError(
+  new Error(
+    'SillyTavern capability "loadWorldInfo" is not available on the current context.',
+  ),
+);
+assert(
+  /compatibility|sillytavern/i.test(capabilityErr.title),
+  "Missing SillyTavern capability gets compatibility guidance",
+);
+
+const schemaErr = explainError(
+  new Error('Invalid lorebook data for "Broken": entries must be an object.'),
+);
+assert(
+  /lorebook|data/i.test(schemaErr.title),
+  "Malformed lorebook data gets data-integrity guidance",
+);
+
 // Storage
 const storageErr = explainError(
   new Error("Backup failed: storage may be full"),

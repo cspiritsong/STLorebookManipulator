@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> Release ledger: the current manifest and latest published tag are `0.8.0`.
+> This section records work after that release; no newer tag or release has been
+> published.
+
 ### Added
 - **Lore Assistant**: session-only OOC guidance is now available while creating or editing entries. Its conversation can create a new-entry draft or guide the existing rewrite suggestion flow; no changes are saved automatically.
 - **Instruction-based entry drafts**: Create New Entry can now generate editable title, keys, secondary keys, and content from user instructions, show field/content before-after previews, and optionally check the draft for duplicate, overlap, or contradiction risks before saving.
@@ -22,13 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`/lm-chat` slash command**: `/lm-chat <start> <end> [instructions]` opens the popup with an inclusive 0-based chat range prefilled for Create from Chat Range.
 - **Multi-lorebook review**: choose Review Multiple Books, select lorebooks, and receive one combined issue list. Every issue displays its source lorebook; reviews remain independent per book so UIDs never collide.
 - **Current Lorebooks filter**: the main popup can now narrow its selector to World Info books currently active in SillyTavern, with an All Lorebooks reset.
+- **SillyTavern compatibility and lorebook data boundary**: World Info, generation, connection-profile routing, editor reload, and capability detection now pass through `src/st-context.js`; `src/lorebook-schema.js` validates/deep-clones reads, rejects malformed books before mutation, and preserves unknown entry fields through saves.
+- **Review preflight and cross-batch candidates**: deterministic checks flag duplicate titles/content, shared keys, empty entries, and locally oversized content; a bounded second pass reviews likely cross-batch pairs instead of blindly comparing every pair.
+- **Review observability and budgets**: review results report local findings, candidate counts, skipped candidate passes, and weak empty-object replies. Rewrite, review, resolve, and chat/draft response-token settings are now independent.
 
 ### Changed
 - **Request-feedback refactor**: moved shared request progress and Continue-control rendering from the popup workflow module into `src/request-status.js`, without changing behavior.
 - **Rate-limit resilience**: every LLM request now retries transient failures (rate limits, proxy hiccups, network blips) with exponential backoff (up to 3 attempts). Auth and context-length errors are not retried (retrying wouldn't help).
 - **Request pacing**: whole-book review and Apply All now pace requests (~600ms between batches/issues) so a large book doesn't fire many calls back-to-back and trip the provider's rate limit.
 - **Cancellable review**: the review panel now has Cancel Review. Connection-profile calls abort immediately; active-connection calls use SillyTavern's generation stop and then retain any completed-batch results.
-- **Multi-lorebook Apply All safety**: bulk fixes now create one backup per affected book and only resolve entries within that issue's source book.
+- **Mutation pipeline**: Resolve and Apply All generate plans first, then apply grouped per-book backup/save/read-back transactions; settings-drawer backup actions are awaitable and use verified restore.
 
 ## [0.8.0] - 2026-06-06
 

@@ -20,6 +20,15 @@ Read this document first. It summarizes everything the project is, what's built,
 
 ---
 
+## Source and Release Ledger
+
+- **Public source of truth:** GitHub's `master` branch, which is the repository's current default branch.
+- **Local development checkout:** local `main` tracks `origin/master`; the local name is retained to avoid an unapproved remote branch rename.
+- **Release state:** `manifest.json` declares `0.8.0`, which is also the latest published tag. The top `Unreleased` section in `CHANGELOG.md` describes work after the `v0.8.0` release; no newer tag or release has been published.
+- **Install source:** the repository URL in the installation instructions resolves to the public `master` branch.
+
+---
+
 ## How to Install
 
 In SillyTavern: Extensions → Install Extension → paste:
@@ -31,7 +40,7 @@ Then enable it. The extension lives in `SillyTavern/public/scripts/extensions/th
 
 ---
 
-## What's Built (current: v0.7.0)
+## What's Built (current development snapshot: manifest v0.8.0; latest published tag: v0.8.0)
 
 ### Core features
 1. **Quick-access book icon** on the character sheet, group panel, and right-hand button bar. Opens the main popup.
@@ -59,8 +68,10 @@ Full file-by-file breakdown is in `ARCHITECTURE.md`. Summary here for quick refe
 ### Source modules (`src/`)
 | File | Purpose |
 |---|---|
-| `lorebook.js` | Data access layer for SillyTavern's World Info API: `getLorebookNames`, `loadLorebook`, `updateEntryFields`, `updateEntryContent`, `deleteEntry`, `sanitizeEntryFields`, `parseKeywordString`. |
-| `llm.js` | LLM interaction: `generateRewrite` (single entry), `reviewEntries` (whole-book review with auto-batching + retry/skip), `resolveIssue` (multi-entry fix plan). Schemas: `REWRITE_SCHEMA`, `REVIEW_SCHEMA`, `RESOLVE_SCHEMA`. Parsers: `parseLLMResponse`, `parseReviewResponse`, `parseResolveResponse`. `callLLM` routes through `ConnectionManagerRequestService.sendRequest()` when profile is set, otherwise through `generateRaw()` on the active connection. `normalizeLLMContent` unifies response shapes. |
+| `st-context.js` | SillyTavern compatibility adapter: context resolution, capability detection, guarded World Info load/save/reload, active generation, connection-profile listing/request routing, events, and optional generation stopping. |
+| `lorebook-schema.js` | Pure World Info data contract: validates and deep-clones books/entries, preserves unknown fields, normalizes missing defaults, and rejects malformed books with typed errors. |
+| `lorebook.js` | Data access layer through the compatibility adapter: `getLorebookNames`, `loadLorebookData`, `loadLorebook`, `updateEntryFields`, `updateEntryContent`, `deleteEntry`, `sanitizeEntryFields`, `parseKeywordString`. |
+| `llm.js` | LLM interaction: `generateRewrite` (single entry), `reviewEntries` (whole-book review with auto-batching + retry/skip), `resolveIssue` (multi-entry fix plan). Schemas: `REWRITE_SCHEMA`, `REVIEW_SCHEMA`, `RESOLVE_SCHEMA`. `callLLM` routes through the compatibility adapter for active or selected connection profiles; `normalizeLLMContent` unifies response shapes. |
 | `diff.js` | Word-level LCS-based diff. Pure function + DOM rendering (inline and side-by-side). |
 | `backup.js` | localStorage-backed backup history. `createBackup`, `getBackupHistory`, `restoreBackup`, `downloadBackup`, `clearAllBackups`. |
 | `ui.js` | All popup logic: `openMainPopup` (main), `openRewritePopup` (editor), `openResolvePopup` (multi-entry). `renderEntryList`, `renderIssueList`, `renderResolvePlan`. Session cache at module scope. |
@@ -71,7 +82,7 @@ Full file-by-file breakdown is in `ARCHITECTURE.md`. Summary here for quick refe
 - `manifest.json` — ST extension metadata. Version, entry point (`index.js`), style (`style.css`), minimum ST version, GitHub home.
 - `settings.html` — handlebars template rendered into the Extensions drawer. Contains the settings UI (lorebook selector, connection profile dropdown, diff style, backup retention, prompt preset, custom prompt textarea, max tokens, backup history).
 - `style.css` — all styles.
-- `tests/` — 10 test files + runner. 180 tests pass. Covers: syntax safety, all buttons typed, HTML escaping, parse functions, batching resilience, review fixed-tracking, backup, lorebook CRUD, resolve parsing.
+- `tests/` — 16 test files + runner. Covers: syntax safety, adapter capabilities, lorebook schema/normalization, all buttons typed, HTML escaping, parse functions, batching resilience, review fixed-tracking, backup, lorebook CRUD, resolve parsing, request status, chat extraction, and UI utilities.
 
 ---
 
@@ -88,8 +99,10 @@ Or click "Update" on the extension in ST's Extensions panel, but this may hit br
 ### Testing
 ```bash
 node tests/run-tests.js
+# or
+npm test
 ```
-180 tests. Every bug fix must include a regression test (per the user's brief). `tests/syntax.test.js` runs `node --check` on every shipped JS file to guard against load-breaking errors. `tests/button-type.test.js` scans `ui.js` for two common ST-popup bugs: buttons missing `type="button"` (submit default closes `<dialog>`) and `okButton: null` (leaves ST's default OK button visible, which also closes popups). Both of these have caused real bugs.
+Every bug fix must include a regression test (per the user's brief). `tests/syntax.test.js` runs `node --check` on every shipped JS file to guard against load-breaking errors. `tests/button-type.test.js` scans `ui.js` for two common ST-popup bugs: buttons missing `type="button"` (submit default closes `<dialog>`) and `okButton: null` (leaves ST's default OK button visible, which also closes popups). Both of these have caused real bugs.
 
 ### Committing
 Commit messages follow `<type>: <short description>` (feat/fix/refactor/docs/test/chore). Tag every release with `gh release create vX.Y.Z --repo cspiritsong/STLorebookManipulator`.
@@ -192,4 +205,4 @@ New to this codebase? Start here:
 
 ---
 
-_Last updated: 2026-06-01 by spiritsong. Current version: v0.7.0._
+_Last updated: 2026-08-19. Manifest version: v0.8.0; latest published tag: v0.8.0._

@@ -788,3 +788,36 @@
     background: rgba(255, 107, 107, 0.2);
     color: #ff6b6b;
 }
+
+/* Keyboard focus should remain visible in the popup and settings drawer. */
+.lm-entry-body:focus-visible,
+.lm-quick-access-icon:focus-visible {
+    outline: 2px solid var(--SmartThemeColor, #5cf4a0);
+    outline-offset: 2px;
+}
+
+/* Keep action rows usable when a narrow popup wraps onto multiple lines. */
+.lm-popup-actions,
+.lm-lorebook-filter-actions {
+    flex-wrap: wrap;
+}
+
+@media (max-width: 600px) {
+    .lm-diff-side-by-side {
+        flex-direction: column;
+    }
+
+    .lm-backup-item {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .lm-backup-actions {
+        flex-wrap: wrap;
+    }
+
+    .lm-popup-actions > button {
+        flex: 1 1 auto;
+    }
+}

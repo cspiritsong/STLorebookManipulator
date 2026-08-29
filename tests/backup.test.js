@@ -48,6 +48,17 @@ function assertThrows(fn, message) {
   }
 }
 
+async function assertRejects(promise, message) {
+  try {
+    await promise;
+    failed++;
+    console.error(`  ❌ FAIL: ${message} (expected rejection but resolved)`);
+  } catch (e) {
+    passed++;
+    console.log(`  ✅ PASS: ${message}`);
+  }
+}
+
 const TEST_BOOK = "TestLorebook";
 const SAMPLE_DATA = {
   entries: { 0: { uid: 0, content: "Original entry.", key: ["test"] } },
@@ -150,6 +161,51 @@ assertThrows(
       () => {},
     ),
   "Throws when restoring non-existent backup",
+);
+
+// Restore must await asynchronous persistence before reloading or returning.
+clearAllBackups(TEST_BOOK);
+const asyncRestoreEntry = createBackup(TEST_BOOK, restoreData, 5);
+const restoreOrder = [];
+const asyncRestore = restoreBackup(
+  TEST_BOOK,
+  asyncRestoreEntry.timestamp,
+  async () => {
+    restoreOrder.push("save-start");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    restoreOrder.push("save-end");
+  },
+  async () => {
+    restoreOrder.push("reload");
+  },
+);
+assert(
+  asyncRestore && typeof asyncRestore.then === "function",
+  "Restore returns an awaitable operation when persistence is asynchronous",
+);
+await asyncRestore;
+assert(
+  JSON.stringify(restoreOrder) ===
+    JSON.stringify(["save-start", "save-end", "reload"]),
+  "Restore reloads only after asynchronous save completes",
+);
+
+// A capacity failure must not overwrite or prune the previous history.
+const quotaStorage = {
+  getItem() {
+    return JSON.stringify([{ timestamp: 1, date: "old", data: { entries: {} } }]);
+  },
+  setItem() {
+    const error = new Error("quota exceeded");
+    error.name = "QuotaExceededError";
+    throw error;
+  },
+};
+await assertRejects(
+  Promise.resolve().then(() =>
+    createBackup(TEST_BOOK, restoreData, 5, quotaStorage),
+  ),
+  "Backup capacity failure is explicit and rejects before mutation",
 );
 
 // Empty history for unknown book

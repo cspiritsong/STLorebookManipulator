@@ -1,3 +1,11 @@
+import { getSTContext, STCapabilityError } from "./st-context.js";
+import {
+  buildCrossBatchCandidates,
+  dedupeReviewIssues,
+  findLocalReviewIssues,
+  formatCrossBatchCandidates,
+} from "./review-analysis.js";
+
 // ── Schemas ──────────────────────────────────────────────────────────────
 
 // Schema for a single-entry rewrite suggestion.
@@ -396,11 +404,13 @@ async function callLLMOnce(
   if (signal?.aborted) {
     throw new Error("Request cancelled.");
   }
+  const stContext = getSTContext(context);
+
   // Route through a specific connection profile.
   if (profileId) {
-    const service = context.ConnectionManagerRequestService;
-    if (!service || typeof service.sendRequest !== "function") {
-      throw new Error(
+    if (!stContext.hasCapability("connectionProfileRequests")) {
+      throw new STCapabilityError(
+        "connectionProfileRequests",
         'Connection Manager is not available. Pick "Active connection" or enable the Connection Manager extension.',
       );
     }
@@ -412,7 +422,7 @@ async function callLLMOnce(
 
     // json_schema (snake_case) is passed as an override payload field.
     const overridePayload = jsonSchema ? { json_schema: jsonSchema } : {};
-    const result = await service.sendRequest(
+    const result = await stContext.sendRequest(
       profileId,
       messages,
       responseLength,
@@ -423,13 +433,8 @@ async function callLLMOnce(
   }
 
   // Default: use whatever API is active in SillyTavern.
-  if (!context || typeof context.generateRaw !== "function") {
-    throw new Error(
-      "generateRaw is not available on the current SillyTavern context.",
-    );
-  }
   // ST's generateRaw uses `responseLength` (not `max_tokens`).
-  const result = await context.generateRaw({
+  const result = await stContext.generateRaw({
     systemPrompt,
     prompt,
     responseLength,
@@ -769,8 +774,9 @@ export function batchEntries(entries, maxBatchChars = 12000) {
   return batches;
 }
 
-// Review all entries and return a combined list of issues. Auto-batches large
-// books and reports progress via options.onProgress(currentBatch, totalBatches).
+// Review all entries and return a combined list of issues. A deterministic local
+// preflight runs first; large books are then batched, followed by a bounded
+// cross-batch pass only when likely candidate pairs exist.
 // options.profileId routes through a chosen connection profile (else active).
 export async function reviewEntries(
   entries,
@@ -790,9 +796,18 @@ export async function reviewEntries(
   const signal = options.signal || null;
 
   const batches = batchEntries(entries, maxBatchChars);
-  const allIssues = [];
+  const localIssues =
+    options.localPreflight === false
+      ? []
+      : findLocalReviewIssues(entries, options.localPreflightOptions);
+  const allIssues = [...localIssues];
   let skippedBatches = 0; // batches whose reply couldn't be read, even after a retry
   let cancelled = false;
+  let emptyObjectResponses = 0;
+  let crossBatchCandidateCount = 0;
+  let crossBatchSkipped = false;
+  const reviewResponseLength =
+    options.reviewResponseLength || maxTokens || 2048;
 
   const systemPrompt = `You are a lorebook auditor. You review SillyTavern lorebook entries and identify issues that could be improved.
 
@@ -848,7 +863,7 @@ Report issues as JSON with an "issues" array. Reference each affected entry by i
           {
             systemPrompt,
             prompt,
-            responseLength: maxTokens || 2048,
+            responseLength: reviewResponseLength,
             jsonSchema: REVIEW_SCHEMA,
             profileId,
             signal,
@@ -860,6 +875,7 @@ Report issues as JSON with an "issues" array. Reference each affected entry by i
         );
 
         parsed = parseReviewResponse(result);
+        if (parsed.format === "empty-object") emptyObjectResponses++;
       } catch (e) {
         if (signal?.aborted) {
           cancelled = true;
@@ -889,18 +905,78 @@ Report issues as JSON with an "issues" array. Reference each affected entry by i
     }
   }
 
-  // Only treat the whole review as failed if EVERY batch was unreadable.
-  if (!cancelled && skippedBatches === batches.length) {
+  if (!cancelled && options.crossBatchReview !== false) {
+    const candidates = buildCrossBatchCandidates(entries, batches, {
+      maxCandidates: options.maxCrossBatchCandidates,
+    });
+    crossBatchCandidateCount = candidates.length;
+
+    if (candidates.length > 0) {
+      if (onProgress) onProgress(batches.length, batches.length);
+      const candidatePrompt = `## Instructions
+${instructions && instructions.trim() ? instructions.trim() : "Review these likely cross-batch lorebook overlaps and report only genuine duplicates, overlaps, or contradictions."}
+
+## Candidate Pairs
+${formatCrossBatchCandidates(candidates)}
+
+Report only genuine issues as JSON with an "issues" array. Reference each affected entry by its exact uid and name.`;
+      let parsedCandidates = null;
+      for (let attempt = 0; attempt < 2 && parsedCandidates === null; attempt++) {
+        try {
+          const prompt =
+            attempt === 0
+              ? candidatePrompt
+              : `${candidatePrompt}\n\n${formatReminder}`;
+          const result = await callLLM(
+            {
+              systemPrompt,
+              prompt,
+              responseLength:
+                options.crossBatchResponseLength || reviewResponseLength,
+              jsonSchema: REVIEW_SCHEMA,
+              profileId,
+              signal,
+              requestDelayMs: options.requestDelayMs,
+              onProgress: options.onRequestProgress,
+              onRequestFailure: options.onRequestFailure,
+            },
+            context,
+          );
+          parsedCandidates = parseReviewResponse(result);
+          if (parsedCandidates.format === "empty-object") emptyObjectResponses++;
+        } catch (e) {
+          if (signal?.aborted) {
+            cancelled = true;
+            break;
+          }
+          console.error(
+            `[LorebookManipulator] Cross-batch review attempt ${attempt + 1} failed:`,
+            e,
+          );
+        }
+      }
+      if (parsedCandidates === null) crossBatchSkipped = true;
+      else allIssues.push(...parsedCandidates.issues);
+    }
+  }
+
+  // Only treat the whole review as failed if EVERY batch was unreadable and
+  // deterministic preflight did not produce any usable finding.
+  if (!cancelled && skippedBatches === batches.length && allIssues.length === 0) {
     throw new Error(
       "Could not parse LLM response as JSON. The model may not support structured output. Try a more capable model or raise Max Response Tokens.",
     );
   }
 
   return {
-    issues: allIssues,
+    issues: dedupeReviewIssues(allIssues),
     batchCount: batches.length,
     skippedBatches,
     cancelled,
+    localIssueCount: localIssues.length,
+    crossBatchCandidateCount,
+    crossBatchSkipped,
+    emptyObjectResponses,
   };
 }
 
@@ -1086,8 +1162,10 @@ export function parseReviewResponse(rawText) {
 
   // Find the array of issues from whatever shape we got.
   let rawIssues;
+  let format = "issues";
   if (Array.isArray(parsed)) {
     rawIssues = parsed;
+    format = "array";
   } else if (parsed && typeof parsed === "object") {
     if (Array.isArray(parsed.issues)) {
       rawIssues = parsed.issues;
@@ -1096,9 +1174,11 @@ export function parseReviewResponse(rawText) {
       const arrayProp = Object.values(parsed).find((v) => Array.isArray(v));
       if (arrayProp) {
         rawIssues = arrayProp;
+        format = "alternate-array";
       } else if (Object.keys(parsed).length === 0) {
         // A bare {} is a valid "I found nothing" answer.
         rawIssues = [];
+        format = "empty-object";
       } else {
         throw new Error('Review response missing "issues" array.');
       }
@@ -1140,7 +1220,7 @@ export function parseReviewResponse(rawText) {
     // An issue with no description is useless; drop it.
     .filter((it) => it.description !== "");
 
-  return { issues };
+  return { issues, format };
 }
 
 // Parse and sanitize a resolution plan. `affectedEntries` is used to coerce

@@ -25,9 +25,14 @@ console.log("\n=== Button Type Safety Tests ===\n");
 // explicit type defaults to type="submit", and clicking a submit button inside
 // a dialog closes the dialog — the "ragequit on Generate" bug (v0.6.x).
 // Every button we create inside a popup MUST be type="button".
-// This test statically scans ui.js so the bug can't silently come back.
+// This test statically scans both UI entry points so the bug can't silently
+// come back in either the settings drawer or the main popup.
 
-const src = readFileSync(join(root, "src/ui.js"), "utf-8");
+const sources = [
+  readFileSync(join(root, "src/ui.js"), "utf-8"),
+  readFileSync(join(root, "index.js"), "utf-8"),
+];
+const src = sources.join("\n");
 
 // 1. Template-literal buttons: every "<button" must declare type="button".
 const openTags = src.match(/<button\b[^>]*>/g) || [];

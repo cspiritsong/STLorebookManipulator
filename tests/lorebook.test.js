@@ -5,7 +5,20 @@ import {
   updateEntryContent,
   deleteEntry,
   createEntry,
+  loadLorebook,
+  loadLorebookData,
+  executeChangePlan,
+  executeChangePlans,
+  restoreLorebookBackup,
 } from "../src/lorebook.js";
+import {
+  clearAllBackups,
+  getBackupHistory,
+} from "../src/backup.js";
+import {
+  planDeleteEntry,
+  planEditEntry,
+} from "../src/change-plan.js";
 
 let passed = 0;
 let failed = 0;
@@ -144,6 +157,96 @@ assertThrows(
 assertThrows(() => sanitizeEntryFields(null), "Throws when fields is null");
 
 console.log("\n=== updateEntryFields Tests ===\n");
+
+await (async () => {
+  const ctx = makeMockContext([
+    {
+      uid: 3,
+      comment: "Preserve me",
+      content: "Original body",
+      key: ["keep"],
+      keysecondary: [],
+      position: 2,
+      order: 77,
+      selectiveLogic: "and",
+      customExtensionData: { nested: true },
+    },
+  ]);
+  const loadedDocument = await loadLorebookData("Book", ctx);
+  assert(
+    loadedDocument.entries["3"].customExtensionData.nested === true,
+    "loadLorebookData returns a normalized full document for backups",
+  );
+  const loaded = await loadLorebook("Book", ctx);
+  assert(
+    loaded[0].selectiveLogic === "and" &&
+      loaded[0].customExtensionData.nested === true,
+    "loadLorebook preserves unknown entry fields",
+  );
+
+  await updateEntryFields("Book", 3, { content: "Updated body" }, ctx);
+  assert(
+    ctx._store.entries["3"].selectiveLogic === "and" &&
+      ctx._store.entries["3"].customExtensionData.nested === true,
+    "Updating an entry preserves unknown fields on the saved round trip",
+  );
+})();
+
+await (async () => {
+  const emptyContext = {
+    async loadWorldInfo() {
+      return { entries: {} };
+    },
+  };
+  const entries = await loadLorebook("Empty", emptyContext);
+  assert(entries.length === 0, "loadLorebook accepts an explicitly empty book");
+
+  const malformedContext = {
+    async loadWorldInfo() {
+      return { entries: null };
+    },
+  };
+  await assertRejects(
+    loadLorebook("Broken", malformedContext),
+    "loadLorebook rejects malformed book data",
+  );
+
+  await assertRejects(
+    loadLorebook("Missing API", {}),
+    "loadLorebook rejects a missing loadWorldInfo capability",
+  );
+
+  let attemptedSave = 0;
+  let attemptedReload = 0;
+  const saveFailureContext = {
+    async loadWorldInfo() {
+      return {
+        entries: {
+          "1": {
+            uid: 1,
+            comment: "Original",
+            content: "Original body",
+            key: [],
+            keysecondary: [],
+          },
+        },
+      };
+    },
+    async saveWorldInfo() {
+      attemptedSave++;
+      throw new Error("save transport unavailable");
+    },
+    reloadWorldInfoEditor() {
+      attemptedReload++;
+    },
+  };
+  await assertRejects(
+    updateEntryFields("Book", 1, { content: "Changed" }, saveFailureContext),
+    "updateEntryFields reports a save failure",
+  );
+  assert(attemptedSave === 1, "Save failure is attempted once");
+  assert(attemptedReload === 0, "Editor reload is not reported after a failed save");
+})();
 
 await (async () => {
   const ctx = makeMockContext([
@@ -297,6 +400,136 @@ await (async () => {
     firstUid === 1,
     "createEntry starts at uid 1 for empty lorebook",
   );
+})();
+
+console.log("\n=== Safe mutation pipeline Tests ===\n");
+
+await (async () => {
+  const ctx = makeMockContext([
+    {
+      uid: 4,
+      comment: "Original",
+      content: "Original body",
+      key: ["original"],
+      keysecondary: [],
+      position: 3,
+      order: 88,
+      customExtensionData: { keep: true },
+    },
+  ]);
+  await executeChangePlan(
+    "Pipeline Book",
+    planEditEntry("Pipeline Book", 4, { content: "Changed" }),
+    ctx,
+  );
+  const history = await getBackupHistory("Pipeline Book");
+  assert(history.length === 1, "Mutation pipeline creates a backup before saving");
+  assert(
+    ctx._store.entries["4"].position === 3 &&
+      ctx._store.entries["4"].customExtensionData.keep === true,
+    "Mutation pipeline preserves structural and unknown fields",
+  );
+})();
+
+await (async () => {
+  const store = {
+    entries: {
+      "1": {
+        uid: 1,
+        comment: "Original",
+        content: "Original body",
+        key: [],
+        keysecondary: [],
+        order: 100,
+      },
+    },
+  };
+  let reloads = 0;
+  const mismatchContext = {
+    async loadWorldInfo() {
+      return JSON.parse(JSON.stringify(store));
+    },
+    async saveWorldInfo() {
+      // Simulate a transport that reports success but did not persist.
+    },
+    reloadWorldInfoEditor() {
+      reloads++;
+    },
+  };
+  await assertRejects(
+    executeChangePlan(
+      "Mismatch Book",
+      planEditEntry("Mismatch Book", 1, { content: "Should not claim success" }),
+      mismatchContext,
+    ),
+    "Read-back mismatch rejects instead of claiming a successful save",
+  );
+  assert(reloads === 0, "Read-back mismatch does not refresh the editor as success");
+})();
+
+await (async () => {
+  const stores = {
+    A: {
+      entries: {
+        "1": { uid: 1, comment: "A1", content: "A", key: [], keysecondary: [] },
+        "2": { uid: 2, comment: "A2", content: "A2", key: [], keysecondary: [] },
+      },
+    },
+    B: {
+      entries: {
+        "1": { uid: 1, comment: "B1", content: "B", key: [], keysecondary: [] },
+      },
+    },
+  };
+  const saves = { A: 0, B: 0 };
+  const bulkContext = {
+    async loadWorldInfo(name) {
+      return JSON.parse(JSON.stringify(stores[name]));
+    },
+    async saveWorldInfo(name, data) {
+      saves[name]++;
+      stores[name].entries = JSON.parse(JSON.stringify(data.entries));
+    },
+    reloadWorldInfoEditor() {},
+  };
+  const ledger = await executeChangePlans(
+    [
+      planEditEntry("A", 1, { content: "A updated" }),
+      planDeleteEntry("A", 2),
+      planEditEntry("B", 1, { content: "B updated" }),
+    ],
+    bulkContext,
+  );
+  assert(saves.A === 1 && saves.B === 1, "Bulk pipeline saves once per affected book");
+  assert(
+    ledger.results.every((result) => result.ok) &&
+      ledger.results.find((result) => result.bookName === "A").operations.length === 2,
+    "Bulk pipeline returns a per-book success ledger",
+  );
+})();
+
+await (async () => {
+  const restoreBook = "Restore Pipeline Book";
+  await clearAllBackups(restoreBook);
+  const source = { entries: { "1": { uid: 1, comment: "Old", content: "Old", key: [], keysecondary: [] } } };
+  const ctx = {
+    current: JSON.parse(JSON.stringify(source)),
+    async loadWorldInfo() {
+      return JSON.parse(JSON.stringify(this.current));
+    },
+    async saveWorldInfo(_name, data) {
+      this.current = JSON.parse(JSON.stringify(data));
+    },
+    async reloadWorldInfoEditor() {},
+  };
+  await executeChangePlan(
+    restoreBook,
+    planEditEntry(restoreBook, 1, { content: "New" }),
+    ctx,
+  );
+  const backup = (await getBackupHistory(restoreBook))[0];
+  await restoreLorebookBackup(restoreBook, backup.timestamp, ctx);
+  assert(ctx.current.entries["1"].content === "Old", "Restore pipeline waits for and verifies the restored save");
 })();
 
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);

@@ -1,7 +1,10 @@
-import { getLorebookNames, loadLorebook } from "./src/lorebook.js";
+import {
+  getLorebookNames,
+  loadLorebook,
+  restoreLorebookBackup,
+} from "./src/lorebook.js";
 import {
   getBackupHistory,
-  restoreBackup,
   downloadBackup,
   getBackupStorageUsage,
   clearAllBackups,
@@ -13,6 +16,7 @@ import {
   filterEntries,
 } from "./src/ui.js";
 import { escapeHtml, escapeAttr } from "./src/utils.js";
+import { getSTContext } from "./src/st-context.js";
 
 const MODULE_NAME = "lorebook_manipulator";
 
@@ -22,6 +26,9 @@ const DEFAULT_SETTINGS = Object.freeze({
   promptPreset: "prune",
   customPrompt: "",
   maxTokens: 1024,
+  reviewMaxTokens: 2048,
+  resolveMaxTokens: 2048,
+  chatMaxTokens: 1024,
   reviewBatchBudget: 12000,
   connectionProfileId: "",
   requestDelayMs: 5000,
@@ -32,7 +39,7 @@ let currentEntries = [];
 let slashCommandRegistered = false;
 
 jQuery(async () => {
-  const context = SillyTavern.getContext();
+  const context = getSTContext();
 
   const settingsHtml = await context.renderExtensionTemplateAsync(
     "third-party/STLorebookManipulator",
@@ -48,7 +55,7 @@ jQuery(async () => {
     currentBookName = $(this).val();
     if (currentBookName) {
       await loadAndDisplayEntries(currentBookName, context);
-      renderBackupHistory(currentBookName, context);
+      await renderBackupHistory(currentBookName, context);
     } else {
       $("#lm_entry_list_container").hide();
       currentEntries = [];
@@ -92,6 +99,24 @@ jQuery(async () => {
   $("#lm_max_tokens").on("change", function () {
     const val = parseInt($(this).val(), 10);
     getSettings(context).maxTokens = Math.max(256, Math.min(8192, val || 1024));
+    context.saveSettingsDebounced();
+  });
+
+  $("#lm_review_max_tokens").on("change", function () {
+    const val = parseInt($(this).val(), 10);
+    getSettings(context).reviewMaxTokens = Math.max(256, Math.min(8192, val || 2048));
+    context.saveSettingsDebounced();
+  });
+
+  $("#lm_resolve_max_tokens").on("change", function () {
+    const val = parseInt($(this).val(), 10);
+    getSettings(context).resolveMaxTokens = Math.max(256, Math.min(8192, val || 2048));
+    context.saveSettingsDebounced();
+  });
+
+  $("#lm_chat_max_tokens").on("change", function () {
+    const val = parseInt($(this).val(), 10);
+    getSettings(context).chatMaxTokens = Math.max(256, Math.min(8192, val || 1024));
     context.saveSettingsDebounced();
   });
 
@@ -206,6 +231,9 @@ function initSettings(context) {
   $("#lm_prompt_preset").val(settings.promptPreset);
   $("#lm_custom_prompt").val(settings.customPrompt);
   $("#lm_max_tokens").val(settings.maxTokens);
+  $("#lm_review_max_tokens").val(settings.reviewMaxTokens);
+  $("#lm_resolve_max_tokens").val(settings.resolveMaxTokens);
+  $("#lm_chat_max_tokens").val(settings.chatMaxTokens);
   $("#lm_review_batch_budget").val(settings.reviewBatchBudget);
   $("#lm_request_delay").val(settings.requestDelayMs / 1000);
 
@@ -221,16 +249,9 @@ function populateConnectionProfiles(context) {
   const select = $("#lm_connection_profile");
   const settings = getSettings(context);
 
-  const service = context.ConnectionManagerRequestService;
-  if (!service || typeof service.getSupportedProfiles !== "function") {
-    // Connection Manager not available — keep just the "Active connection" default.
-    select.val("");
-    return;
-  }
-
   let profiles = [];
   try {
-    profiles = service.getSupportedProfiles() || [];
+    profiles = context.getConnectionProfiles();
   } catch (e) {
     console.warn(
       "[LorebookManipulator] Could not list connection profiles:",
@@ -267,7 +288,15 @@ function toggleCustomPrompt(preset) {
 }
 
 async function populateLorebookSelector(context) {
-  const names = getLorebookNames(context);
+  let names = [];
+  try {
+    names = getLorebookNames(context);
+  } catch (error) {
+    console.error("[LorebookManipulator] Failed to list lorebooks:", error);
+    if (typeof toastr !== "undefined" && typeof toastr.error === "function") {
+      toastr.error(`SillyTavern compatibility issue: ${error.message}`);
+    }
+  }
   const select = $("#lm_lorebook_select");
   select
     .empty()
@@ -333,16 +362,27 @@ function renderEntryList(context) {
 
     item.on("click", () => {
       const settings = getSettings(context);
-      openRewritePopup(entry, currentBookName, settings, context);
+      const bookName = currentBookName;
+      openRewritePopup(
+        entry,
+        bookName,
+        settings,
+        context,
+        null,
+        async () => {
+          await loadAndDisplayEntries(bookName, context);
+          await renderBackupHistory(bookName, context);
+        },
+      );
     });
 
     container.append(item);
   }
 }
 
-function renderBackupHistory(bookName, context) {
+async function renderBackupHistory(bookName, context) {
   const container = $("#lm_backup_history");
-  const history = getBackupHistory(bookName);
+  const history = await getBackupHistory(bookName);
 
   if (history.length === 0) {
     container.html('<p class="lm-no-backups">No backups yet.</p>');
@@ -357,8 +397,8 @@ function renderBackupHistory(bookName, context) {
             <div class="lm-backup-item">
                 <span class="lm-backup-date">${escapeHtml(date)}</span>
                 <div class="lm-backup-actions">
-                    <button class="menu_button lm-restore-btn" title="Restore this backup">Restore</button>
-                    <button class="menu_button lm-download-btn" title="Download as file">Download</button>
+                    <button type="button" class="menu_button lm-restore-btn" title="Restore this backup">Restore</button>
+                    <button type="button" class="menu_button lm-download-btn" title="Download as file">Download</button>
                 </div>
             </div>
         `);
@@ -371,25 +411,20 @@ function renderBackupHistory(bookName, context) {
         );
         if (!confirmed) return;
 
-        restoreBackup(
-          bookName,
-          backup.timestamp,
-          (name, data) => context.saveWorldInfo(name, data),
-          () => context.reloadWorldInfoEditor?.(),
-        );
+        await restoreLorebookBackup(bookName, backup.timestamp, context);
 
         toastr.success("Backup restored successfully.");
         await loadAndDisplayEntries(bookName, context);
-        renderBackupHistory(bookName, context);
+        await renderBackupHistory(bookName, context);
       } catch (e) {
         console.error("[LorebookManipulator] Restore failed:", e);
         toastr.error(`Restore failed: ${e.message}`);
       }
     });
 
-    item.find(".lm-download-btn").on("click", () => {
+    item.find(".lm-download-btn").on("click", async () => {
       try {
-        const filename = downloadBackup(bookName, backup.timestamp);
+        const filename = await downloadBackup(bookName, backup.timestamp);
         toastr.success(`Downloaded: ${filename}`);
       } catch (e) {
         console.error("[LorebookManipulator] Download failed:", e);
@@ -429,9 +464,9 @@ function renderBackupHistory(bookName, context) {
       );
       if (!confirmed) return;
 
-      clearAllBackups(bookName);
+      await clearAllBackups(bookName);
       toastr.success(`All backups for "${bookName}" cleared.`);
-      renderBackupHistory(bookName, context);
+      await renderBackupHistory(bookName, context);
     } catch (e) {
       console.error("[LorebookManipulator] Clear backups failed:", e);
       toastr.error(`Failed to clear backups: ${e.message}`);
@@ -457,12 +492,21 @@ function injectQuickAccessButtons() {
     icon.className =
       "menu_button fa-solid fa-book-open interactable lm-quick-access-icon";
     icon.title = "Lorebook Manipulator";
+    icon.setAttribute("role", "button");
+    icon.tabIndex = 0;
+    icon.setAttribute("aria-label", "Open Lorebook Manipulator");
 
-    icon.addEventListener("click", () => {
-      const context = SillyTavern.getContext();
+    const openPopup = () => {
+      const context = getSTContext();
       const settings = getSettings(context);
       populateConnectionProfiles(context);
       openMainPopup(settings, context);
+    };
+    icon.addEventListener("click", openPopup);
+    icon.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      openPopup();
     });
 
     target.prepend(icon);
@@ -478,7 +522,7 @@ function observeForQuickAccessButtons() {
 
   observer.observe(document.body, { childList: true, subtree: true });
 
-  const context = SillyTavern.getContext();
+  const context = getSTContext();
   if (context?.eventSource && context?.eventTypes) {
     const events = [
       context.eventTypes.CHAT_CHANGED,

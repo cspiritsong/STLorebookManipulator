@@ -5,10 +5,17 @@
 
 A SillyTavern extension for safely rewriting and pruning lorebook entries using your active LLM connection.
 
+## Release Status
+
+The public source and default branch are `master`. The manifest declares `0.8.0`,
+which is also the latest published tag; the top **Unreleased** section of
+[CHANGELOG.md](./CHANGELOG.md) records work after that release. Installing from
+the repository URL below uses the public `master` branch.
+
 ## What It Does
 
 - Browse entries in any of your SillyTavern lorebooks
-- **Review the whole book**: ask the LLM to scan all entries and recommend fixes (duplicates, overlap, verbosity, contradictions). Large books are auto-batched to fit the model's context window.
+- **Review the whole book**: deterministic preflight checks obvious duplicates, shared keys, empty entries, and oversized content; the LLM then scans batched entries and performs a bounded cross-batch candidate pass for likely overlaps, duplicates, verbosity, and contradictions.
 - **Resolve issues that span multiple entries** with a single cross-entry plan (e.g. merge duplicates into one and delete the rest), generated on demand and applied only after you approve each action
 - **Edit an entry's title, primary keys, secondary keys, and content** directly — by hand or with AI help
 - **Create new entries** manually or as an editable AI draft from your instructions; optionally check the draft for overlaps with the selected lorebook before saving
@@ -47,6 +54,12 @@ Or manually:
 - SillyTavern ≥ 1.12.0
 - A working API connection configured in SillyTavern (any backend: OpenAI, Claude, local, etc.)
 - At least one lorebook with entries
+
+## Development and Testing
+
+The extension has no build step or runtime dependency. Run `npm test` (or
+`node tests/run-tests.js`) for the complete dependency-free test suite. Run
+`npm run check` for the syntax/static checks used by the suite.
 
 ## Usage
 

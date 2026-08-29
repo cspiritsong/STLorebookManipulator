@@ -14,11 +14,11 @@
 - **Workaround**: Reload the page after changing your connection profiles. The quick-access button also refreshes the dropdown on each click.
 - **Fix planned**: A future release could subscribe to `CONNECTION_PROFILE_CREATED/UPDATED/DELETED` events (or use `ConnectionManagerRequestService.handleDropdown`) to keep the list live. The quick-access button already calls `populateConnectionProfiles()` on open.
 
-### Whole-Book Review Cannot Detect Cross-Batch Issues
-- **What**: Large lorebooks are split into batches so each request fits the model's context window. The model only sees one batch at a time, so an issue spanning two batches (e.g. duplicate entries that land in different batches) will not be detected.
-- **Impact**: On very large books, some duplicates/overlaps may be missed. Most personal lorebooks fit in a single batch and are unaffected.
-- **Workaround**: Increase the Review Batch Budget setting (default 12000 chars) to keep more entries per batch, or review subsets of the book.
-- **Fix planned**: A future "second pass" could re-check flagged candidates across batches, or send entry summaries first.
+### Cross-Batch Review Uses Lexical Candidate Gating
+- **What**: Large lorebooks are split into batches. A bounded second pass now checks cross-batch pairs that share activation keys or meaningful title terms, but it does not compare every possible pair.
+- **Impact**: Semantic duplicates with no shared lexical signal can still be missed; the candidate cap also trades completeness for predictable request cost.
+- **Workaround**: Increase the Review Batch Budget, review a smaller subset, or temporarily use focused instructions with distinctive keys/titles.
+- **Status**: Targeted cross-batch candidate review is implemented and reports candidate count/skips in the review metadata.
 
 ### LLM May Not Produce Valid Structured Output On Weak Models
 - **What**: Some models (especially small local models or RP fine-tunes) struggle to return clean JSON. For a single-entry rewrite this surfaces as a friendly "AI did not reply in the right format" error. For a whole-book review, each batch is retried once with a strict format reminder; batches that still can't be read are skipped (you keep the rest), and the UI reports how many were skipped.
@@ -32,22 +32,17 @@
 - **Workaround**: Read the visible error guidance, correct the underlying problem, then click **Continue** to retry only that request. Completed review batches and bulk-fix progress remain intact.
 - **Fix planned**: None. These failures originate outside the extension; pacing and resumable requests are the safe mitigation.
 
-### localStorage Size Limits Not Monitored
-- **What**: Backups are stored in localStorage, which typically has a 5-10MB limit per origin. Large lorebooks with many backup entries could approach this limit silently.
+### Browser Backup Storage Limits
+- **What**: The backup layer now uses a storage abstraction and reports explicit capacity/write failures, but the default browser store is still localStorage, which typically has a 5-10MB limit per origin.
 - **Impact**: Backup creation may fail (a visible error is shown via toast), blocking the apply.
 - **Workaround**: Reduce backup retention count in settings. The backup history panel now shows a storage usage indicator (green/yellow/red) so you can see when you're approaching the limit.
-- **Fix planned**: ~~A future release will add a storage usage indicator and graceful degradation (skip oldest backup when full).~~ **Storage indicator implemented** — shows usage percentage with color-coded warnings (>70% yellow, >90% red). Graceful degradation on full storage still pending.
+- **Fix planned**: Evaluate IndexedDB as the primary large-book store while retaining downloadable JSON backups and a visible non-destructive fallback.
 
 ### Diff Algorithm Is Word-Level Only
 - **What**: The custom diff operates on whitespace-delimited words. It does not handle intra-word changes, punctuation-only changes, or reordering gracefully.
 - **Impact**: Minor visual artifacts in diff highlighting when edits are within a single word or involve heavy rephrasing.
 - **Workaround**: None needed — functional correctness is unaffected. Visual clarity may be imperfect.
 - **Fix planned**: Evaluate character-level or sentence-level diff later if user feedback warrants it.
-
-### No Validation of Lorebook Data Integrity Before Modification
-- **What**: The extension trusts that `loadWorldInfo()` returns well-formed data. Corrupt or partially-saved lorebooks could cause unexpected behavior.
-- **Impact**: Low — ST's own editor would also struggle with corrupt data. Extension errors are caught and surfaced via toast.
-- **Fix planned**: A future release will add basic schema validation on load.
 
 ### Chat Range Uses Internal 0-Based Message Indexes
 - **What**: Create from Chat Range accepts SillyTavern's internal chat indexes, starting at 0, with both endpoints included.
@@ -65,7 +60,8 @@
 
 ## Resolved Issues
 
-- **Book icon disappeared after v0.4.0 update** (v0.4.1) — a stray `});` in `ui.js` broke module load. Fixed, and added `tests/syntax.test.js` (`node --check` on every JS file) to catch this class of error before release.
+- **Malformed lorebook data could reach mutation workflows** (post-v0.8.0) — `src/st-context.js` now isolates SillyTavern API capabilities, and `src/lorebook-schema.js` validates/deep-clones World Info data before load, backup, or mutation. Unknown entry fields are preserved and malformed books receive recoverable guidance.
+- **Book icon disappeared after v0.4.0 update** (v0.4.1) — a stray `});` in `ui.js` broke the whole module. Fixed, and added `tests/syntax.test.js` (`node --check` on every JS file) to catch this class of error before release.
 - **`escapeAttr is not defined` in main popup** (v0.1) — escaping helpers were duplicated across files; consolidated into `src/utils.js`.
 - **Clicking an entry did nothing** (v0.1) — code called a non-existent `popup.close()`; now uses ST's `completeCancelled()`.
 - **Token limit ignored** (v0.1) — `generateRaw` expects `responseLength`, not `max_tokens`; corrected.

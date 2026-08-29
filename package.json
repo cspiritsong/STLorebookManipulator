@@ -1,0 +1,11 @@
+{
+  "name": "stlorebookmanipulator",
+  "version": "0.8.0",
+  "private": true,
+  "description": "Dependency-free SillyTavern lorebook maintenance extension",
+  "type": "module",
+  "scripts": {
+    "test": "node tests/run-tests.js",
+    "check": "node tests/syntax.test.js"
+  }
+}
