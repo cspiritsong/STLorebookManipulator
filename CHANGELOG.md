@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > This section records work after that release; no newer tag or release has been
 > published.
 
+### Fixed
+- **Local model and KoboldCpp compatibility (#1)**: bypass SillyTavern's core `jsonSchema` filter when connecting through non-OpenAI backends (such as KoboldCpp) where ST core dropped generated text and returned empty `{}`. Added automatic single retry fallback if an empty object envelope is ever returned with schema enabled.
+- **Thinking / reasoning tag sanitization (#1)**: strip reasoning blocks (`<thought>`, `<think>`, `<reasoning>`, `<scratchpad>`, including unclosed tags) so models like Gemma 4 and DeepSeek-R1 do not break JSON bracket extraction.
+- **Accurate error classification**: separated LLM network errors from response format/schema validation errors so JSON structure failures are no longer falsely reported as provider rate-limiting drops.
+
 ### Added
 - **Lore Assistant**: session-only OOC guidance is now available while creating or editing entries. Its conversation can create a new-entry draft or guide the existing rewrite suggestion flow; no changes are saved automatically.
 - **Instruction-based entry drafts**: Create New Entry can now generate editable title, keys, secondary keys, and content from user instructions, show field/content before-after previews, and optionally check the draft for duplicate, overlap, or contradiction risks before saving.

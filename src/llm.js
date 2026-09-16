@@ -397,9 +397,10 @@ async function callLLM(args, context, maxRetries = 2) {
 
 // Send one structured request, routing through a chosen connection profile
 // when `profileId` is set, otherwise through the active connection.
-async function callLLMOnce(
+export async function callLLMOnce(
   { systemPrompt, prompt, responseLength, jsonSchema, profileId, signal },
   context,
+  _isSentinelRetry = false,
 ) {
   if (signal?.aborted) {
     throw new Error("Request cancelled.");
@@ -434,13 +435,46 @@ async function callLLMOnce(
 
   // Default: use whatever API is active in SillyTavern.
   // ST's generateRaw uses `responseLength` (not `max_tokens`).
+  // IMPORTANT (Issue #1): SillyTavern's core `generateRawData` only implements
+  // structured output extraction for `mainApi === 'openai'`.
+  // For other backends (KoboldCpp, TextGen, Ollama, Novel, etc.), passing `jsonSchema`
+  // causes ST's `extractJsonFromData` to drop the response and return an empty "{}" object.
+  // We only pass `jsonSchema` if mainApi is not explicitly a non-OpenAI backend. For non-OpenAI
+  // backends, we let generateRaw return the raw generated text, and our own `extractJson()` handles extraction.
+  const rawContext = stContext.raw || context;
+  const mainApi =
+    rawContext?.mainApi || rawContext?.raw?.mainApi || context?.mainApi;
+  const isNonSchemaApi = Boolean(mainApi && mainApi !== "openai");
+
   const result = await stContext.generateRaw({
     systemPrompt,
     prompt,
     responseLength,
-    jsonSchema,
+    ...(!isNonSchemaApi && jsonSchema ? { jsonSchema } : {}),
   });
-  return normalizeLLMContent(result);
+
+  const normalized = normalizeLLMContent(result);
+
+  // Sentinel fallback: if a backend still returned "{}" when jsonSchema was passed,
+  // retry once without jsonSchema so we get the raw completion.
+  if (
+    !_isSentinelRetry &&
+    jsonSchema &&
+    !isNonSchemaApi &&
+    typeof normalized === "string" &&
+    /^\s*\{\s*\}\s*$/.test(normalized)
+  ) {
+    console.warn(
+      "[LorebookManipulator] generateRaw returned empty JSON object with jsonSchema; retrying without schema.",
+    );
+    return callLLMOnce(
+      { systemPrompt, prompt, responseLength, jsonSchema: null, profileId, signal },
+      context,
+      true,
+    );
+  }
+
+  return normalized;
 }
 
 // ── Single-entry rewrite ─────────────────────────────────────────────────
@@ -476,8 +510,9 @@ ${entryContent}
 
 Rewrite this entry according to the instructions above. Return your response as JSON with "rewrittenContent" and "justification" fields.`;
 
+  let result;
   try {
-    const result = await callLLM(
+    result = await callLLM(
       {
         systemPrompt,
         prompt: userPrompt,
@@ -488,14 +523,14 @@ Rewrite this entry according to the instructions above. Return your response as 
       },
       context,
     );
-
-    return parseLLMResponse(result);
   } catch (e) {
     console.error("[LorebookManipulator] LLM call failed:", e);
     throw new Error(
       `LLM request failed: ${e.message}. Check your API connection and try again.`,
     );
   }
+
+  return parseLLMResponse(result);
 }
 
 // ── Create a lorebook entry from a chat-message range ─────────────────────
@@ -539,8 +574,9 @@ ${chatText}
 
 Create one new lorebook entry from this range. Return title, primaryKeys, secondaryKeys, content, and justification as JSON.`;
 
+  let result;
   try {
-    const result = await callLLM(
+    result = await callLLM(
       {
         systemPrompt,
         prompt: userPrompt,
@@ -551,7 +587,6 @@ Create one new lorebook entry from this range. Return title, primaryKeys, second
       },
       context,
     );
-    return parseChatEntryResponse(result);
   } catch (e) {
     console.error(
       "[LorebookManipulator] Chat-range entry generation failed:",
@@ -561,6 +596,8 @@ Create one new lorebook entry from this range. Return title, primaryKeys, second
       `LLM request failed: ${e.message}. Check your API connection and try again.`,
     );
   }
+
+  return parseChatEntryResponse(result);
 }
 
 // Generate a complete, editable new entry from the user's own instructions.
@@ -714,8 +751,9 @@ ${instructions.trim()}
 
 Revise the draft. Return title, primaryKeys, secondaryKeys, content, and justification as JSON.`;
 
+  let result;
   try {
-    const result = await callLLM(
+    result = await callLLM(
       {
         systemPrompt,
         prompt: userPrompt,
@@ -726,13 +764,14 @@ Revise the draft. Return title, primaryKeys, secondaryKeys, content, and justifi
       },
       context,
     );
-    return parseChatEntryResponse(result);
   } catch (e) {
     console.error("[LorebookManipulator] Chat-range draft revision failed:", e);
     throw new Error(
-      `LLM request failed: ${e.message}. Check your API connection and try again.`,
+      `LLM request failed: ${e.message}. Check your API connection and try again.`
     );
   }
+
+  return parseChatEntryResponse(result);
 }
 
 // ── Whole-book review ────────────────────────────────────────────────────
@@ -1047,6 +1086,18 @@ Produce a resolution plan as JSON with a "summary" and an "actions" array (one a
 
 // ── Response parsing ─────────────────────────────────────────────────────
 
+// Strip reasoning / thinking tags emitted by reasoning models (Gemma 4 <thought>, DeepSeek-R1 <think>, etc.)
+export function stripReasoning(text) {
+  if (typeof text !== "string") return "";
+  return text
+    .replace(
+      /<(?:thought|think|reasoning|scratchpad)\b[^>]*>[\s\S]*?<\/(?:thought|think|reasoning|scratchpad)>/gi,
+      "",
+    )
+    .replace(/<(?:thought|think|reasoning|scratchpad)\b[^>]*>[\s\S]*$/gi, "")
+    .trim();
+}
+
 // Extract a JSON object from raw model output. Tolerates code fences and
 // surrounding prose. Shared by both the rewrite and review parsers so the
 // extraction logic lives in exactly one place.
@@ -1056,6 +1107,9 @@ function extractJson(rawText) {
   }
 
   let cleaned = rawText.trim();
+
+  // Strip reasoning/thinking tags (e.g. Gemma 4 <thought>, DeepSeek-R1 <think>)
+  cleaned = stripReasoning(cleaned);
 
   const codeBlockMatch = cleaned.match(
     /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/i,

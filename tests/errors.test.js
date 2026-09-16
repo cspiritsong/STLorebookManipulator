@@ -44,6 +44,15 @@ const jsonErr = explainError(
 assert(hasShape(jsonErr), "JSON error returns full guidance shape");
 assert(/format/i.test(jsonErr.title), "JSON error title mentions format");
 
+// Missing rewrittenContent schema failure maps to format guidance (Issue #1 regression)
+const missingFieldErr = explainError(
+  new Error('LLM response missing "rewrittenContent" field or it is empty.'),
+);
+assert(
+  /format/i.test(missingFieldErr.title),
+  "Missing rewrittenContent error maps to format guidance",
+);
+
 // Invalid XML phrasing (WREC-style) should also map to the format rule
 const xmlErr = explainError("No results from AI/Invalid XML");
 assert(

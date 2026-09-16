@@ -37,6 +37,8 @@ const RULES = [
       "invalid json",
       "not valid json",
       "unexpected token",
+      "missing \"rewrittencontent\"",
+      "missing \"content\"",
       "invalid xml",
       "no results from ai",
       "json",
@@ -44,7 +46,7 @@ const RULES = [
     ],
     title: "The AI did not reply in the right format",
     what: "The extension asked the AI for a structured (JSON) answer, but the reply could not be read. This usually means the model is too small, or its response was cut off before it finished.",
-    fix: 'Try a capable model (OpenAI, Claude, or Gemini work well), and raise "Max Response Tokens" in settings to 2000 or more. If you picked a Connection Profile, make sure it uses a plain preset, not a roleplay one.',
+    fix: 'Try a capable model (OpenAI, Claude, or Gemini work well), and raise "Max Response Tokens" in settings to 2000 or more. If you picked a Connection Profile, make sure it uses a plain preset, not a roleplay one. For local reasoning models, ensure thinking tags do not consume the entire token budget.',
   },
   {
     match: ["connection manager is not available", "connection manager"],
