@@ -7,9 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> Release ledger: the current manifest and latest published tag are `0.8.0`.
-> This section records work after that release; no newer tag or release has been
-> published.
+## [0.9.0] - 2026-09-27
 
 ### Fixed
 - **Local model and KoboldCpp compatibility (#1)**: bypass SillyTavern's core `jsonSchema` filter when connecting through non-OpenAI backends (such as KoboldCpp) where ST core dropped generated text and returned empty `{}`. Added automatic single retry fallback if an empty object envelope is ever returned with schema enabled.
